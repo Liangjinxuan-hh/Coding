@@ -4,6 +4,7 @@ import numpy as np
 import math
 import time
 import base64
+import os
 
 from web_bridge import publish_hand_snapshot, publish_hand_command, publish_hand_frame
 
@@ -26,6 +27,7 @@ except Exception:
     landmark_pb2 = None
 
 detection_results = None
+LOCAL_PREVIEW = os.getenv("DRIP_LOCAL_PREVIEW", "0") == "1"
 
 
 def print_result(result: HandLandmarkerResult, output_image: mp.Image, timestamp_ms: int):
@@ -248,7 +250,8 @@ def main():
                 cv2.putText(frame, line, (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                 y_offset += 25
 
-            cv2.imshow('Hand Gesture LED Control', frame)
+            if LOCAL_PREVIEW:
+                cv2.imshow('Hand Gesture LED Control', frame)
 
             now_ts = time.time()
             if now_ts - last_frame_push > 0.35:
@@ -264,11 +267,12 @@ def main():
                 "left": serialize_led_column(led_column_left),
                 "right": serialize_led_column(led_column_right),
             })
-            if cv2.waitKey(1) & 0xFF == 27:
+            if LOCAL_PREVIEW and cv2.waitKey(1) & 0xFF == 27:
                 break
 
     cap.release()
-    cv2.destroyAllWindows()
+    if LOCAL_PREVIEW:
+        cv2.destroyAllWindows()
 
 
 # <--- 修改: 绘制单个LED列的辅助函数

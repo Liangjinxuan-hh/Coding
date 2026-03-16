@@ -72,7 +72,7 @@ def voice_recognition_thread():
         source = microphone
     except Exception as e:
         V_VOICE_AVAIL[0] = False
-        V_CURRENT_VOICE_STATUS[0] = f"语音模块不可用: {e}"
+        V_CURRENT_VOICE_STATUS[0] = "语音未启用（未安装PyAudio）"
         print(f"语音模块不可用: {e}")
         return
 
@@ -184,7 +184,7 @@ def voice_recognition_thread():
                     for keyword, info in command_map.items():
                         # 使用 in 判断更灵活，且只取前50个字符进行匹配
                         if keyword in text and len(text) < 50:
-                            send_command(info["cmd"], command_sound, V_CURRENT_VOICE_STATUS)
+                            send_command(info["cmd"], command_sound, V_CURRENT_VOICE_STATUS, event_channel="voice")
                             V_LAST_CMD_TIME[0] = time.time()
                             command_sent = True
 

@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+BRIDGE_PORT = int(os.getenv("DRIP_BRIDGE_PORT", "5051"))
 MODULE_CONFIG = {
     "face": {
         "cwd": ROOT_DIR / "Face" / "PythonProject",
@@ -31,6 +32,10 @@ MODULE_CONFIG = {
     "hand": {
         "cwd": ROOT_DIR / "Hand",
         "cmd": [sys.executable, "main2.py"],
+    },
+    "voice": {
+        "cwd": ROOT_DIR / "Face" / "PythonProject",
+        "cmd": [sys.executable, "voice_module.py"],
     },
 }
 CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -87,6 +92,7 @@ class ModuleProcessManager:
             cfg = MODULE_CONFIG[key]
             env = os.environ.copy()
             env.setdefault("PYTHONPATH", str(ROOT_DIR))
+            env.setdefault("DRIP_EVENT_ENDPOINT", f"http://127.0.0.1:{BRIDGE_PORT}/api/events")
             proc = subprocess.Popen(
                 cfg["cmd"],
                 cwd=str(cfg["cwd"]),
@@ -153,7 +159,7 @@ async def ingest_event(event: Event) -> Dict[str, Any]:
 
 
 class ControlRequest(BaseModel):
-    target: str = Field(..., pattern="^(face|hand)$")
+    target: str = Field(..., pattern="^(face|hand|voice)$")
     action: str = Field(..., pattern="^(start|stop)$")
 
 
@@ -164,7 +170,14 @@ async def control_status() -> Dict[str, Any]:
 
 @app.post("/api/control")
 async def control_module(req: ControlRequest) -> Dict[str, Any]:
+    stopped: List[str] = []
     if req.action == "start":
+        # Face and hand modules both use the same camera; keep only these mutually exclusive.
+        if req.target in {"face", "hand"}:
+            for key, is_running in module_manager.status().items():
+                if key in {"face", "hand"} and key != req.target and is_running:
+                    await module_manager.stop(key)
+                    stopped.append(key)
         changed = await module_manager.start(req.target)
     else:
         changed = await module_manager.stop(req.target)
@@ -177,7 +190,7 @@ async def control_module(req: ControlRequest) -> Dict[str, Any]:
             "payload": {"target": req.target, "running": states.get(req.target, False), "states": states},
         }
     )
-    return {"status": "ok", "changed": changed, "modules": states}
+    return {"status": "ok", "changed": changed, "stopped": stopped, "modules": states}
 
 
 @app.websocket("/ws")
@@ -195,4 +208,4 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("bridge.server:app", host="0.0.0.0", port=5050, reload=False)
+    uvicorn.run("bridge.server:app", host="0.0.0.0", port=BRIDGE_PORT, reload=False)

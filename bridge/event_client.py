@@ -14,7 +14,7 @@ import time
 from typing import Any, Dict
 from urllib import error, request
 
-DEFAULT_ENDPOINT = os.getenv("DRIP_EVENT_ENDPOINT", "http://127.0.0.1:5050/api/events")
+DEFAULT_ENDPOINT = os.getenv("DRIP_EVENT_ENDPOINT", "http://127.0.0.1:5051/api/events")
 ENABLED = os.getenv("DRIP_EVENT_ENABLED", "1") != "0"
 
 

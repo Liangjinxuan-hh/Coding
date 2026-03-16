@@ -9,6 +9,12 @@ except Exception:  # pragma: no cover - bridge optional
     def publish_face_command(*_, **__):
         return
 
+try:
+    from voice_web_bridge import publish_voice_command
+except Exception:  # pragma: no cover - bridge optional
+    def publish_voice_command(*_, **__):
+        return
+
 
 def initialize_serial(reinit=False):
     """初始化或重新初始化串口连接"""
@@ -40,8 +46,9 @@ def initialize_serial(reinit=False):
     config.serial_status = status
 
 
-def send_command(command, command_sound, current_voice_status_ref):
+def send_command(command, command_sound=None, current_voice_status_ref=None, event_channel="face"):
     """发送命令到串口设备，带状态跟踪"""
+    publish_command = publish_voice_command if event_channel == "voice" else publish_face_command
     if config.ser and config.ser.is_open:
         try:
             # 发送命令并添加换行符作为结束标志
@@ -50,24 +57,27 @@ def send_command(command, command_sound, current_voice_status_ref):
 
             # 更新全局状态
             config.LAST_COMMAND_SENT[0] = command
-            current_voice_status_ref[0] = f"执行: {command}"
+            if current_voice_status_ref is not None:
+                current_voice_status_ref[0] = f"执行: {command}"
 
             # 播放反馈音效
             if command_sound:
                 command_sound.play()
 
-            publish_face_command(command, {"status": "ok"})
+            publish_command(command, {"status": "ok"})
 
         except Exception as e:
             error_msg = f"命令发送失败: {str(e)[:30]}"
             print(error_msg)
-            current_voice_status_ref[0] = error_msg
+            if current_voice_status_ref is not None:
+                current_voice_status_ref[0] = error_msg
             config.serial_status = "串口发送失败"
             config.LAST_COMMAND_SENT[0] = f"失败: {command}"
     else:
         msg = "串口未连接，无法发送"
         print(msg)
-        current_voice_status_ref[0] = msg
+        if current_voice_status_ref is not None:
+            current_voice_status_ref[0] = msg
         config.LAST_COMMAND_SENT[0] = f"失败: {msg}"
 
 

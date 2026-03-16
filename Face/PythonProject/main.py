@@ -1,8 +1,8 @@
 import cv2
 import mediapipe as mp
 import time
-import threading
 import tkinter as tk
+import os
 from pathlib import Path
 from tkinter import messagebox
 from urllib import request
@@ -13,16 +13,15 @@ import config as app_config
 from config import CONFIG, load_config, LEFT_EYE_EAR_POINTS, RIGHT_EYE_EAR_POINTS, LAST_COMMAND_SENT
 from serial_comms import initialize_serial, send_command, receive_data
 from face_analysis import eye_aspect_ratio, mouth_aspect_ratio, detect_face_direction
-from voice_control import voice_recognition_thread, V_CURRENT_VOICE_STATUS, V_VOICE_AVAIL, V_LAST_SPEECH, speak_text, \
-    V_WAKE_DETECTED
 from ui_utils import show_settings_window, get_chinese_font, draw_text
 from ui_manager import Button
-from web_bridge import publish_face_snapshot, publish_voice_state, publish_face_frame
+from web_bridge import publish_face_snapshot, publish_face_frame
 
 # 全局变量
 mouse_click_pos = None
 current_face_status = "等待检测..."
-WINDOW_NAME = "Face & Voice Control"
+WINDOW_NAME = "Face Control"
+LOCAL_PREVIEW = os.getenv("DRIP_LOCAL_PREVIEW", "0") == "1"
 FACE_TASK_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
     "face_landmarker/float16/latest/face_landmarker.task"
@@ -95,13 +94,6 @@ def main(tk_root):
     initialize_serial()
     chinese_font_path = get_chinese_font()
 
-    # 播放欢迎语（使用voice_control中的TTS函数）
-    speak_text("系统已启动")
-
-    # 启动语音识别线程
-    voice_thread = threading.Thread(target=voice_recognition_thread, daemon=True)
-    voice_thread.start()
-
     # 初始化摄像头
     cap = cv2.VideoCapture(CONFIG.get('CAMERA_INDEX', 0))
     if not cap.isOpened():
@@ -154,12 +146,12 @@ def main(tk_root):
     EAR_HISTORY_LENGTH = 300
     CALIBRATION_FRAMES = 150
     calibrated = False
-    last_voice_payload = ("", "")
     last_frame_push = 0.0
+    face_command_status = [""]
 
-    # **关键修改 1: 设置窗口为可缩放**
-    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-    cv2.setMouseCallback(WINDOW_NAME, mouse_callback)
+    if LOCAL_PREVIEW:
+        cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(WINDOW_NAME, mouse_callback)
 
     while cap.isOpened():
         success, image = cap.read()
@@ -189,24 +181,22 @@ def main(tk_root):
         line_height = int(h * 0.045)  # 4.5% of height for line spacing
         font_scale = h / 720 * 0.6  # Base font scale on a standard 720p height
 
-        # 动态创建/更新设置按钮的位置 (右上角)
-        SETTINGS_BUTTON_WIDTH = int(w * 0.12)  # 12% of width
-        SETTINGS_BUTTON_HEIGHT = int(h * 0.05)  # 5% of height
-        button_x = w - SETTINGS_BUTTON_WIDTH - padding
-        button_y = padding
-        # 在每次循环中重新定义 Button 对象，使用动态坐标
-        settings_button = Button(
-            (button_x, button_y),
-            SETTINGS_BUTTON_WIDTH,
-            SETTINGS_BUTTON_HEIGHT,
-            "设置"
-        )
-        # ----------------------------------------------------------------------
+        settings_button = None
+        if LOCAL_PREVIEW:
+            SETTINGS_BUTTON_WIDTH = int(w * 0.12)
+            SETTINGS_BUTTON_HEIGHT = int(h * 0.05)
+            button_x = w - SETTINGS_BUTTON_WIDTH - padding
+            button_y = padding
+            settings_button = Button(
+                (button_x, button_y),
+                SETTINGS_BUTTON_WIDTH,
+                SETTINGS_BUTTON_HEIGHT,
+                "设置"
+            )
 
-        # 检查设置按钮点击 (使用新的 settings_button)
-        if mouse_click_pos and settings_button.is_clicked(mouse_click_pos):
-            show_settings_window(tk_root)
-            mouse_click_pos = None  # 重置点击位置
+            if mouse_click_pos and settings_button.is_clicked(mouse_click_pos):
+                show_settings_window(tk_root)
+                mouse_click_pos = None
 
         landmarks = None
         direction = "LOOK_CENTER"
@@ -274,38 +264,31 @@ def main(tk_root):
             # 状态变化检测与命令发送
             current_time = time.time()
 
-            # 检查语音交互状态 (V_WAKE_DETECTED[0] == True 表示处于语音交互模式)
-            if V_WAKE_DETECTED[0]:
-                # 语音模式下，面部命令被屏蔽
-                current_face_status = f"头:{direction.replace('LOOK_', '')} | 眼:{current_eye_state} | 嘴:{current_mouth_state} (语音模式)"
-                # 不发送面部命令到下位机
-            else:
-                # 处于面部交互模式时才发送命令 (表情交互状态)
-                if current_time - last_state_change_time > state_change_cooldown:
-                    command = None
+            if current_time - last_state_change_time > state_change_cooldown:
+                command = None
 
-                    if current_eye_state != last_eye_state:
-                        command = "CLOSE_EYES" if current_eye_state == "闭眼" else "OPEN_EYES"
-                        last_eye_state = current_eye_state
+                if current_eye_state != last_eye_state:
+                    command = "CLOSE_EYES" if current_eye_state == "闭眼" else "OPEN_EYES"
+                    last_eye_state = current_eye_state
 
-                    elif current_mouth_state != last_mouth_state:
-                        command = "OPEN_MOUTH" if current_mouth_state == "张嘴" else "CLOSE_MOUTH"
-                        last_mouth_state = current_mouth_state
+                elif current_mouth_state != last_mouth_state:
+                    command = "OPEN_MOUTH" if current_mouth_state == "张嘴" else "CLOSE_MOUTH"
+                    last_mouth_state = current_mouth_state
 
-                    elif direction != last_direction:
-                        if direction == "LOOK_LEFT":
-                            command = "LOOK_LEFT"
-                        elif direction == "LOOK_RIGHT":
-                            command = "LOOK_RIGHT"
-                        else:
-                            command = "DEFAULT"  # 头部回正
-                        last_direction = direction
+                elif direction != last_direction:
+                    if direction == "LOOK_LEFT":
+                        command = "LOOK_LEFT"
+                    elif direction == "LOOK_RIGHT":
+                        command = "LOOK_RIGHT"
+                    else:
+                        command = "DEFAULT"
+                    last_direction = direction
 
-                    if command:
-                        send_command(command, None, V_CURRENT_VOICE_STATUS)  # 语音状态引用仅用于调试信息显示
-                        last_state_change_time = current_time
+                if command:
+                    send_command(command, None, face_command_status, event_channel="face")
+                    last_state_change_time = current_time
 
-                current_face_status = f"头:{direction.replace('LOOK_', '')} | 眼:{current_eye_state} | 嘴:{current_mouth_state}"
+            current_face_status = f"头:{direction.replace('LOOK_', '')} | 眼:{current_eye_state} | 嘴:{current_mouth_state}"
 
         else:
             current_face_status = "未检测到人脸"
@@ -325,7 +308,6 @@ def main(tk_root):
             "mouth": current_mouth_state,
             "direction": direction,
             "calibrated": calibrated,
-            "voice_mode": "voice" if V_WAKE_DETECTED[0] else "face",
             "serial_status": app_config.serial_status,
             "last_command": LAST_COMMAND_SENT[0],
         })
@@ -339,83 +321,55 @@ def main(tk_root):
                 publish_face_frame(encoded)
                 last_frame_push = now_ts
 
-        # --- UI 绘制 (使用动态计算的坐标和尺寸) ---
-        current_line_y = padding  # 初始行Y坐标
+        if LOCAL_PREVIEW:
+            current_line_y = padding
 
-        # 1. 标题 (第一行，居中显示)
-        title_text = "智能语音表情交互系统"
-        # 字体尺寸需要乘以30或40才能传递给draw_text的PIL部分
-        title_size_px = cv2.getTextSize(title_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale * 1.5, 3)[0]
-        title_x = (w - title_size_px[0]) // 2
+            title_text = "智能语音表情交互系统"
+            title_size_px = cv2.getTextSize(title_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale * 1.5, 3)[0]
+            title_x = (w - title_size_px[0]) // 2
 
-        current_line_y += line_height
-        image = draw_text(image, title_text, (title_x, current_line_y), font_scale * 1.3, (0, 255, 0), True,
-                          chinese_font_path)
-
-        # 2. 面部状态 (左侧区域)
-        # **修正点 1: 确保行增量是整数**
-        current_line_y += int(line_height * 1.5)
-        image = draw_text(image, "表情状态:", (padding, current_line_y), font_scale * 1.1, (255, 255, 255), True,
-                          chinese_font_path)
-        current_line_y += line_height
-        image = draw_text(image, current_face_status, (padding, current_line_y), font_scale, (255, 255, 0), False,
-                          chinese_font_path)
-
-        # 3. 语音状态
-        # **修正点 2**
-        current_line_y += int(line_height * 1.5)
-        voice_status = f"语音状态: {V_CURRENT_VOICE_STATUS[0]}"
-        last_speech = f"最后识别: {V_LAST_SPEECH[0]}"
-        image = draw_text(image, "语音交互:", (padding, current_line_y), font_scale * 1.1, (255, 255, 255), True,
-                          chinese_font_path)
-        current_line_y += line_height
-        image = draw_text(image, voice_status, (padding, current_line_y), font_scale, (0, 255, 255), False,
-                          chinese_font_path)
-        current_line_y += line_height
-        image = draw_text(image, last_speech, (padding, current_line_y), font_scale, (0, 165, 255), False,
-                          chinese_font_path)
-
-        if (V_CURRENT_VOICE_STATUS[0], V_LAST_SPEECH[0]) != last_voice_payload:
-            publish_voice_state(V_CURRENT_VOICE_STATUS[0], V_LAST_SPEECH[0])
-            last_voice_payload = (V_CURRENT_VOICE_STATUS[0], V_LAST_SPEECH[0])
-
-        # 4. 动态阈值显示
-        # **修正点 3**
-        current_line_y += int(line_height * 1.5)
-        if not calibrated:
-            threshold_text = f"校准中... ({len(ear_history)}/{CALIBRATION_FRAMES})"
-            image = draw_text(image, threshold_text, (padding, current_line_y), font_scale, (0, 165, 255), False,
-                              chinese_font_path)
-        else:
-            threshold_text = f"动态闭眼阈值: {dynamic_eye_threshold:.2f} (基准: {baseline_ear:.2f})"
-            image = draw_text(image, threshold_text, (padding, current_line_y), font_scale, (0, 255, 0), False,
+            current_line_y += line_height
+            image = draw_text(image, title_text, (title_x, current_line_y), font_scale * 1.3, (0, 255, 0), True,
                               chinese_font_path)
 
-        # 5. 系统状态显示
-        # **修正点 4 (报错行)**
-        current_line_y += int(line_height * 1.5)
-        image = draw_text(image, app_config.serial_status, (padding, current_line_y), font_scale, (200, 200, 200), False,
-                          chinese_font_path)
-        current_line_y += line_height
-        image = draw_text(image, f"最后命令: {LAST_COMMAND_SENT[0]}", (padding, current_line_y), font_scale,
-                          (255, 100, 255), False,
-                          chinese_font_path)
+            current_line_y += int(line_height * 1.5)
+            image = draw_text(image, "表情状态:", (padding, current_line_y), font_scale * 1.1, (255, 255, 255), True,
+                              chinese_font_path)
+            current_line_y += line_height
+            image = draw_text(image, current_face_status, (padding, current_line_y), font_scale, (255, 255, 0), False,
+                              chinese_font_path)
 
-        # 6. 绘制设置按钮 (已动态创建)
-        image = settings_button.draw(image)
+        if LOCAL_PREVIEW:
+            current_line_y += int(line_height * 1.5)
+            if not calibrated:
+                threshold_text = f"校准中... ({len(ear_history)}/{CALIBRATION_FRAMES})"
+                image = draw_text(image, threshold_text, (padding, current_line_y), font_scale, (0, 165, 255), False,
+                                  chinese_font_path)
+            else:
+                threshold_text = f"动态闭眼阈值: {dynamic_eye_threshold:.2f} (基准: {baseline_ear:.2f})"
+                image = draw_text(image, threshold_text, (padding, current_line_y), font_scale, (0, 255, 0), False,
+                                  chinese_font_path)
 
-        # 7. 退出提示 (锚定左下角)
-        exit_text = "按ESC退出"
-        # **修正点 5: 确保 final position 是整数**
-        image = draw_text(image, exit_text, (padding, h - padding), font_scale * 0.8, (128, 128, 128), False,
-                          chinese_font_path)
+            current_line_y += int(line_height * 1.5)
+            image = draw_text(image, app_config.serial_status, (padding, current_line_y), font_scale, (200, 200, 200), False,
+                              chinese_font_path)
+            current_line_y += line_height
+            image = draw_text(image, f"最后命令: {LAST_COMMAND_SENT[0]}", (padding, current_line_y), font_scale,
+                              (255, 100, 255), False,
+                              chinese_font_path)
 
-        cv2.imshow(WINDOW_NAME, image)
+            if settings_button:
+                image = settings_button.draw(image)
 
-        # 按键处理
-        key = cv2.waitKey(5) & 0xFF
-        if key == 27:  # ESC键退出
-            break
+            exit_text = "按ESC退出"
+            image = draw_text(image, exit_text, (padding, h - padding), font_scale * 0.8, (128, 128, 128), False,
+                              chinese_font_path)
+
+            cv2.imshow(WINDOW_NAME, image)
+
+            key = cv2.waitKey(5) & 0xFF
+            if key == 27:
+                break
 
     # 清理资源
     if face_mesh:
@@ -423,7 +377,8 @@ def main(tk_root):
     if face_landmarker:
         face_landmarker.close()
     cap.release()
-    cv2.destroyAllWindows()
+    if LOCAL_PREVIEW:
+        cv2.destroyAllWindows()
     # 退出前关闭串口
     if app_config.ser and app_config.ser.is_open:
         try:

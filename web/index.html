@@ -3,7 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>滴动仪 · 三维交互面板</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%2365f8d3'/%3E%3Cstop offset='100%25' stop-color='%23ff9d5c'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='32' cy='32' r='30' fill='%2308161f'/%3E%3Cpath d='M32 10c6 10 8 15 8 22a8 8 0 1 1-16 0c0-7 2-12 8-22z' fill='url(%23g)'/%3E%3Ccircle cx='32' cy='44' r='7' fill='%23ffffff' fill-opacity='0.15'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="styles.css" />
     <script type="importmap">
       {
@@ -29,17 +33,20 @@
       <section class="module-control" aria-label="交互模块控制">
         <div class="module-control__intro">
           <h2>交互模块控制</h2>
-          <p>需要时才打开摄像头：启动面部或手势模块会占用系统摄像头资源，结束必须点击对应“停止”按钮。</p>
+          <p>面部与手势模块会占用摄像头；语音模块独立运行，不再挂在面部流程里。</p>
         </div>
         <div class="module-control__buttons">
           <button id="faceStart" class="module-btn">开启面部交互</button>
           <button id="faceStop" class="module-btn module-btn--stop" disabled>结束面部交互</button>
           <button id="handStart" class="module-btn">开启手势交互</button>
           <button id="handStop" class="module-btn module-btn--stop" disabled>结束手势交互</button>
+          <button id="voiceStart" class="module-btn">开启语音识别</button>
+          <button id="voiceStop" class="module-btn module-btn--stop" disabled>结束语音识别</button>
         </div>
         <div class="module-control__status">
           <span id="faceState" class="chip chip--idle">面部：未启动</span>
           <span id="handState" class="chip chip--idle">手势：未启动</span>
+          <span id="voiceState" class="chip chip--idle">语音：未启动</span>
         </div>
       </section>
 
@@ -58,6 +65,7 @@
               <span id="angleValue" class="metric-value">0°</span>
             </div>
           </div>
+          <div id="modelStatus" class="bridge-status" data-tone="warn">3D 模型：正在检查 web/models/dripmotion.glb</div>
         </div>
       </section>
 
@@ -73,7 +81,7 @@
         <article class="insight-card" id="faceCard">
           <header>
             <h2>面部交互</h2>
-            <span id="faceMode" class="badge">等待</span>
+            <span id="faceMode" class="badge">未校准</span>
           </header>
           <div class="video-wrapper">
             <img id="faceStream" class="insight-video" alt="面部摄像头画面" />
@@ -98,44 +106,20 @@
           <div class="led-grid" id="handLedGrid" aria-label="LED 列可视化"></div>
           <ul id="handGestureList" class="gesture-log" aria-label="最近手势"></ul>
         </article>
+
+        <article class="insight-card" id="voiceCard">
+          <header>
+            <h2>语音识别</h2>
+            <span id="voiceBadge" class="badge">等待</span>
+          </header>
+          <p id="voiceStatus">当前状态：等待启动...</p>
+          <div class="insight-row"><span>识别内容</span><strong id="voiceTranscript">--</strong></div>
+          <div class="insight-row"><span>最后命令</span><strong id="voiceCommand">--</strong></div>
+        </article>
       </section>
 
-      <section class="bridge-panel" aria-label="语音 / 手势指令示例">
-        <div class="bridge-panel__column">
-          <h2>语音 / 手势桥接</h2>
-          <p>
-            页面内置 `CommandHub`：外部模块可调用 <code>window.DripCommandHub.send(command)</code>
-            或通过 `postMessage` 发送 { type: "dd-command", payload: "上移" } 来触发动作。
-          </p>
-          <ul>
-            <li>LD3320 等串口模块：解析语音后调用 send("上移")</li>
-            <li>APDS-9960 手势：识别后映射到上移 / 下移 / 左转 / 右转 / 停止</li>
-            <li>Python / WebSocket 网关：将指令透传到本页面</li>
-          </ul>
-        </div>
-        <div class="bridge-panel__column">
-          <label for="commandInput">快速注入模拟指令</label>
-          <div class="command-injector">
-            <input id="commandInput" type="text" placeholder="输入 上移 / 下移 / 左转 / 右转 / 停止" />
-            <button id="commandSend">注入</button>
-          </div>
-          <div class="bridge-hints">
-            <p>也可在控制台执行：<br /><strong>window.DripCommandHub.send("上移")</strong></p>
-            <p>或发送 <strong>window.postMessage({ type: "dd-command", payload: "左转" })</strong></p>
-          </div>
-        </div>
-      </section>
-
-      <section id="browser-ml">
-        <h3>浏览器端手势/人脸识别 (MediaPipe Tasks)</h3>
-        <button id="btnStartBrowserML">启动摄像头识别</button>
-        <div id="browserMlViewport" style="position:relative; width:480px; height:360px;">
-          <video id="cam" playsinline autoplay muted style="width:100%; height:100%; background:#000;"></video>
-          <canvas id="overlay" width="480" height="360" style="position:absolute; left:0; top:0; pointer-events:none;"></canvas>
-        </div>
-      </section>
     </main>
 
-    <script type="module" src="app.js"></script>
+    <script type="module" src="client-main.js?v=20260316-glb8"></script>
   </body>
 </html>

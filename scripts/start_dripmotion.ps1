@@ -8,13 +8,14 @@ $bridgeDir = Join-Path $root "bridge"
 $webDir = Join-Path $root "web"
 $faceDir = Join-Path $root "Face\PythonProject"
 $handDir = Join-Path $root "Hand"
+$bridgePort = 5051
 $pythonExe = "python"
 $py312 = Join-Path $root ".venv312\Scripts\python.exe"
 $pyDefault = Join-Path $root ".venv\Scripts\python.exe"
 if (Test-Path $py312) {
-    $pythonExe = $py312
+    $pythonExe = (Resolve-Path $py312).Path
 } elseif (Test-Path $pyDefault) {
-    $pythonExe = $pyDefault
+    $pythonExe = (Resolve-Path $pyDefault).Path
 }
 
 if ($InstallDeps) {
@@ -34,6 +35,10 @@ if ($InstallDeps) {
     }
 }
 
+$env:DRIP_BRIDGE_PORT = "$bridgePort"
+$env:DRIP_EVENT_ENDPOINT = "http://127.0.0.1:$bridgePort/api/events"
+$env:DRIP_LOCAL_PREVIEW = "0"
+
 function Start-ModuleJob {
     param (
         [string]$Name,
@@ -46,6 +51,19 @@ function Start-ModuleJob {
         return
     }
 
+    # 避免重复同名作业导致端口冲突或状态混乱
+    $existingJobs = Get-Job -Name $Name -ErrorAction SilentlyContinue
+    if ($existingJobs) {
+        foreach ($j in $existingJobs) {
+            try {
+                Stop-Job -Id $j.Id -ErrorAction SilentlyContinue
+                Remove-Job -Id $j.Id -ErrorAction SilentlyContinue
+            } catch {
+                Write-Warning ("Failed to cleanup existing job {0} (Id: {1})" -f $Name, $j.Id)
+            }
+        }
+    }
+
     $job = Start-Job -Name $Name -ScriptBlock {
         param($Dir, $Cmd)
         Set-Location $Dir
@@ -55,11 +73,14 @@ function Start-ModuleJob {
     Write-Host "[$Name] started (Job Id: $($job.Id))" -ForegroundColor DarkCyan
 }
 
-$bridgeCmd = "& `"$pythonExe`" -m uvicorn server:app --reload --port 5050"
+Write-Host "Using Python interpreter: $pythonExe" -ForegroundColor DarkGray
+$bridgeCmd = "& `"$pythonExe`" -m uvicorn bridge.server:app --host 127.0.0.1 --port $bridgePort"
 $webCmd = "& `"$pythonExe`" -m http.server 8081 --bind 127.0.0.1 --directory web"
-Start-ModuleJob -Name "bridge" -WorkingDir $bridgeDir -Command $bridgeCmd
+Start-ModuleJob -Name "bridge" -WorkingDir $root -Command $bridgeCmd
 Start-ModuleJob -Name "web" -WorkingDir $root -Command $webCmd
 
-Write-Host "DripMotion stack launched. Open http://127.0.0.1:8081" -ForegroundColor Green
+Write-Host "DripMotion stack launched. Open http://127.0.0.1:8081 (bridge: $bridgePort)" -ForegroundColor Green
 Write-Host "Use page controls to start or stop face and hand modules." -ForegroundColor Green
 Write-Host "Run Get-Job to inspect jobs, and Stop-Job -Name bridge/web to stop." -ForegroundColor Yellow
+Start-Sleep -Seconds 1
+Start-Process "http://127.0.0.1:8081"
