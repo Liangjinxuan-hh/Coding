@@ -65,7 +65,6 @@
               <span id="angleValue" class="metric-value">0°</span>
             </div>
           </div>
-          <div id="modelStatus" class="bridge-status" data-tone="warn">3D 模型：正在检查 web/models/dripmotion.glb</div>
         </div>
       </section>
 
@@ -74,7 +73,19 @@
         <button class="control-btn" data-command="moveDown">下移</button>
         <button class="control-btn" data-command="rotateLeft">左转</button>
         <button class="control-btn" data-command="rotateRight">右转</button>
+        <button class="control-btn" data-command="flowerOpen">花朵打开</button>
+        <button class="control-btn" data-command="flowerClose">花朵闭合</button>
         <button class="control-btn control-btn--stop" data-command="stop">停止</button>
+      </section>
+
+      <section class="part-debug" aria-label="部件节点锁定调试">
+        <h3>部件节点锁定</h3>
+        <div class="part-debug__buttons">
+            <button id="partBodyOnly" class="control-btn">仅显示主体</button>
+            <button id="partRingOnly" class="control-btn">仅显示圆环</button>
+          <button id="partShowAll" class="control-btn control-btn--stop">显示全部部件</button>
+        </div>
+        <p id="partDebugStatus" class="part-debug__status">部件节点：等待模型加载...</p>
       </section>
 
       <section class="insight-grid" aria-label="传感器状态">
@@ -120,6 +131,6 @@
 
     </main>
 
-    <script type="module" src="client-main.js?v=20260316-glb8"></script>
+    <script type="module" src="client-main.js?v=20260317-flower-map1"></script>
   </body>
 </html>

@@ -1,11 +1,38 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 
 const canvas = document.getElementById("dripCanvas");
 const modelStatusEl = document.getElementById("modelStatus");
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+canvas.addEventListener("webglcontextlost", (e) => {
+  e.preventDefault();
+  console.warn("[DripMotion] WebGL 上下文丢失，等待恢复...");
+  if (modelStatusEl) {
+    modelStatusEl.textContent = "3D 渲染：WebGL 上下文丢失——请关闭多余标签页后刷新";
+    modelStatusEl.dataset.tone = "error";
+  }
+}, false);
+
+canvas.addEventListener("webglcontextrestored", () => {
+  console.log("[DripMotion] WebGL 上下文已恢复");
+  if (modelStatusEl) {
+    modelStatusEl.textContent = "3D 渲染：WebGL 上下文已恢复，重新加载模型...";
+    modelStatusEl.dataset.tone = "warn";
+  }
+  loadExternalModel();
+}, false);
+
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  antialias: false,
+  alpha: true,
+  powerPreference: "default",
+  failIfMajorPerformanceCaveat: false,
+  precision: "mediump",
+});
+renderer.setPixelRatio(1);
 
 const scene = new THREE.Scene();
 scene.background = null;
@@ -65,6 +92,9 @@ const emitter = new THREE.Mesh(
 emitter.position.y = 0.14;
 topPivot.add(emitter);
 
+// 默认不显示内置演示模型，避免外部模型加载时出现“先闪一下试用版”
+fallbackRoot.visible = false;
+
 const modelAnchor = new THREE.Group();
 scene.add(modelAnchor);
 
@@ -75,6 +105,10 @@ const floor = new THREE.Mesh(
 floor.rotation.x = -Math.PI / 2;
 floor.position.y = -0.2;
 scene.add(floor);
+
+const modelBoundsHelper = new THREE.Box3Helper(new THREE.Box3(), 0xffb347);
+modelBoundsHelper.visible = false;
+scene.add(modelBoundsHelper);
 
 const statusText = document.getElementById("statusText");
 const heightValue = document.getElementById("heightValue");
@@ -89,6 +123,12 @@ const handStartBtn = document.getElementById("handStart");
 const handStopBtn = document.getElementById("handStop");
 const voiceStartBtn = document.getElementById("voiceStart");
 const voiceStopBtn = document.getElementById("voiceStop");
+const partPrevBtn = document.getElementById("partPrev");
+const partNextBtn = document.getElementById("partNext");
+const partRingOnlyBtn = document.getElementById("partRingOnly");
+const partShowAllBtn = document.getElementById("partShowAll");
+const partBodyOnlyBtn = document.getElementById("partBodyOnly");
+const partDebugStatusEl = document.getElementById("partDebugStatus");
 
 const faceBindings = {
   status: document.getElementById("faceStatus"),
@@ -153,19 +193,85 @@ const motionBinding = {
   source: "fallback",
 };
 
+const flowerState = {
+  openness: 0,
+  target: 0,
+  speed: 1.1,
+  nodes: [],
+};
+
+const flowerRuntimeConfig = {
+  manualNodeNames: [],
+};
+
+let lastLoadedModelRoot = null;
+
 const modelLoader = new GLTFLoader();
-const MODEL_URL = new URL("./models/dripmotion.glb?v=20260316-named2", import.meta.url).href;
+const fbxLoader = new FBXLoader();
+const FORCE_DEBUG_MODEL_MATERIAL = false;
+const FORCE_WIREFRAME_OVERLAY = false;
+const FORCE_POINTS_OVERLAY = false;
+const MODEL_CANDIDATES = [
+  // FBX 优先（用户指定文件）
+  "./models/ImageToStl.com_999.fbx?v=20260317-fbx-user",
+  "./models/model_999.fbx?v=20260317-fbx",
+  // GLB 备用
+  "./models/model_999.glb?v=20260316-model999b",
+  "./models/ImageToStl.com_999.glb?v=20260316-model999",
+  "./models/dripmotion.glb?v=20260316-named4",
+];
 const MODEL_TARGET_NAMES = new Set(["toppart", "top_part", "top-part", "top"]);
+// 经几何分析：Z=-42~-30 处的薄层是可动圆环，Z=12~51 处的纹路节点属于主体装饰
 const MOVABLE_RING_PATTERNS = [
   /^part_09_ringband$/i,
   /^part_10_ringdiscinner$/i,
-  /^part_11_ringpatterna$/i,
-  /^part_12_ringpatternb$/i,
-  /^part_13_ringpatternc$/i,
-  /^part_14_ringpatternd$/i,
-  /^part_15_ringpatterne$/i,
   /^part_16_ringdiscouter$/i,
 ];
+const PART_NODE_ORDER = [
+  // 主体（静态）
+  "Part_00_BodyShellA",
+  "Part_01_BodyShellB",
+  "Part_02_BodyCoreA",
+  "Part_03_BodyCoreB",
+  "Part_04_BodyCoreC",
+  "Part_05_BodyCoreD",
+  "Part_06_BodyCoreE",
+  "Part_07_BodyCoreF",
+  "Part_08_BodyCoreG",
+  "Part_11_BodyPatternA",
+  "Part_12_BodyPatternB",
+  "Part_13_BodyPatternC",
+  "Part_14_BodyPatternD",
+  "Part_15_BodyPatternE",
+  // 圆环组（可动，3 个节点）
+  "Part_09_RingBand",
+  "Part_10_RingDiscInner",
+  "Part_16_RingDiscOuter",
+];
+const RING_PART_NAMES = new Set([
+  "Part_09_RingBand",
+  "Part_10_RingDiscInner",
+  "Part_16_RingDiscOuter",
+]);
+
+// 手动指定花瓣节点名（最可靠）
+const FLOWER_PART_NAMES = [
+  // "Petal_01", "Petal_02", "Petal_03"
+];
+
+// 未手动指定时，按名字模式自动识别
+const FLOWER_NAME_PATTERNS = [
+  /petal/i,
+  /flower/i,
+  /huaban|hua_ban|花瓣/i,
+  /^part_1[1-5]_bodypattern/i,
+];
+
+const partDebugState = {
+  entries: [],
+  mode: "all",
+  uiBound: false,
+};
 
 const clock = new THREE.Clock();
 
@@ -194,8 +300,92 @@ function updateModelStatus(text, tone = "idle") {
   modelStatusEl.dataset.tone = tone;
 }
 
+function updatePartDebugStatus(text) {
+  if (!partDebugStatusEl) return;
+  partDebugStatusEl.textContent = text;
+}
+
 function setFallbackVisible(visible) {
   fallbackRoot.visible = visible;
+}
+
+function getDisplayFileName(modelUrl) {
+  try {
+    const name = new URL(modelUrl, window.location.href).pathname.split("/").pop() || "unknown.glb";
+    return name.split("?")[0];
+  } catch {
+    return String(modelUrl || "unknown.glb");
+  }
+}
+
+function countRenderableMeshes(root) {
+  let meshCount = 0;
+  root?.traverse((node) => {
+    if (node?.isMesh) meshCount += 1;
+  });
+  return meshCount;
+}
+
+function enforceMeshVisibility(root) {
+  root?.traverse((node) => {
+    if (!node?.isMesh) return;
+    node.visible = true;
+    node.frustumCulled = false;
+    if (node.geometry) {
+      node.geometry.computeBoundingBox();
+      node.geometry.computeBoundingSphere();
+    }
+  });
+}
+
+function addWireframeOverlay(root) {
+  root?.traverse((node) => {
+    if (!node?.isMesh || !node.geometry) return;
+    const wireGeo = new THREE.WireframeGeometry(node.geometry);
+    const wireMat = new THREE.LineBasicMaterial({
+      color: 0xfff36b,
+      transparent: false,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const lines = new THREE.LineSegments(wireGeo, wireMat);
+    lines.frustumCulled = false;
+    lines.renderOrder = 999;
+    node.add(lines);
+  });
+}
+
+function addPointsOverlay(root) {
+  root?.traverse((node) => {
+    if (!node?.isMesh || !node.geometry?.attributes?.position) return;
+    const pointsMat = new THREE.PointsMaterial({
+      color: 0x00ffd0,
+      size: 2.2,
+      sizeAttenuation: true,
+      transparent: false,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const points = new THREE.Points(node.geometry, pointsMat);
+    points.frustumCulled = false;
+    points.renderOrder = 1000;
+    node.add(points);
+  });
+}
+
+function applyDebugMaterial(root) {
+  root?.traverse((node) => {
+    if (!node?.isMesh) return;
+    node.material = new THREE.MeshNormalMaterial({
+      side: THREE.DoubleSide,
+      transparent: false,
+      opacity: 1,
+      depthTest: true,
+      depthWrite: true,
+    });
+  });
 }
 
 function syncMotionBinding() {
@@ -217,9 +407,182 @@ function bindMotionTargets(moveTarget, rotateTarget, source, rotationAxis = "z")
   syncMotionBinding();
 }
 
-function normalizeLoadedModel(root) {
-  // 当前导出的 GLB 在 Web 里呈现为上下颠倒，先整体翻转再归一化。
-  root.rotation.x = Math.PI;
+function applyFlowerPose() {
+  if (!flowerState.nodes.length) return;
+  const t = clamp(flowerState.openness, 0, 1);
+  flowerState.nodes.forEach((entry) => {
+    const { node, basePosition, baseRotation, baseScale, phase } = entry;
+    if (!node) return;
+
+    const radial = 0.045 * t;
+    const tilt = 0.34 * t;
+
+    node.position.copy(basePosition);
+    node.position.x += Math.cos(phase) * radial;
+    node.position.z += Math.sin(phase) * radial;
+    node.position.y += 0.012 * t;
+
+    node.rotation.copy(baseRotation);
+    node.rotation.x = baseRotation.x - tilt;
+
+    node.scale.set(
+      baseScale.x * (1 + 0.20 * t),
+      baseScale.y * (1 - 0.08 * t),
+      baseScale.z * (1 + 0.20 * t)
+    );
+  });
+}
+
+function clearFlowerRig() {
+  flowerState.nodes.forEach((entry) => {
+    const { node, basePosition, baseRotation, baseScale } = entry;
+    if (!node) return;
+    node.position.copy(basePosition);
+    node.rotation.copy(baseRotation);
+    node.scale.copy(baseScale);
+  });
+  flowerState.nodes = [];
+  flowerState.openness = 0;
+  flowerState.target = 0;
+}
+
+function collectNodeNames(root) {
+  const names = [];
+  root?.traverse((node) => {
+    if (node?.name) names.push(node.name);
+  });
+  return [...new Set(names)].sort();
+}
+
+function collectFlowerNodesByName(root, names) {
+  const found = [];
+  names.forEach((name) => {
+    const node = root.getObjectByName(name);
+    if (node?.isObject3D) found.push(node);
+  });
+  return found;
+}
+
+function collectFlowerNodesByPattern(root) {
+  const found = [];
+  root?.traverse((node) => {
+    const n = String(node?.name || "");
+    if (!n) return;
+    if (FLOWER_NAME_PATTERNS.some((p) => p.test(n))) {
+      found.push(node);
+    }
+  });
+  return found;
+}
+
+function setupFlowerRig(root) {
+  clearFlowerRig();
+  if (!root) return;
+  const picked = [];
+  const manualNames = flowerRuntimeConfig.manualNodeNames.length
+    ? flowerRuntimeConfig.manualNodeNames
+    : FLOWER_PART_NAMES;
+
+  if (manualNames.length) {
+    picked.push(...collectFlowerNodesByName(root, manualNames));
+  }
+
+  if (!picked.length) {
+    picked.push(...collectFlowerNodesByPattern(root));
+  }
+
+  if (!picked.length) {
+    const box = new THREE.Box3().setFromObject(root);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+
+    const candidates = [];
+    root.traverse((node) => {
+      if (!node?.isMesh) return;
+      const nbox = new THREE.Box3().setFromObject(node);
+      const ncenter = nbox.getCenter(new THREE.Vector3());
+      const dx = ncenter.x - center.x;
+      const dz = ncenter.z - center.z;
+      const radial = Math.hypot(dx, dz);
+      const nearCenter = radial < Math.max(size.x, size.z) * 0.28;
+      const upperHalf = ncenter.y > center.y - size.y * 0.08;
+      if (nearCenter && upperHalf) {
+        candidates.push({ node, radial });
+      }
+    });
+    candidates.sort((a, b) => a.radial - b.radial);
+    candidates.slice(0, 6).forEach((x) => picked.push(x.node));
+  }
+
+  if (!picked.length) {
+    console.warn("[DripMotion] 未识别到可开合花朵节点");
+    updateStatus("花朵开合：未识别到花瓣节点（可在控制台设置）");
+    return;
+  }
+
+  flowerState.nodes = picked.map((node, index) => ({
+    node,
+    basePosition: node.position.clone(),
+    baseRotation: node.rotation.clone(),
+    baseScale: node.scale.clone(),
+    phase: (index / Math.max(1, picked.length)) * Math.PI * 2,
+  }));
+
+  flowerState.openness = 0;
+  flowerState.target = 0;
+  applyFlowerPose();
+  console.log(`[DripMotion] 花朵开合节点已绑定：${flowerState.nodes.length} 个`, flowerState.nodes.map((x) => x.node.name));
+}
+
+function initFlowerDebugApi() {
+  const api = {
+    listNodeNames() {
+      if (!lastLoadedModelRoot) {
+        console.warn("[DripMotion] 当前没有已加载模型");
+        return [];
+      }
+      const names = collectNodeNames(lastLoadedModelRoot);
+      console.log("[DripMotion] 节点名列表:", names);
+      return names;
+    },
+    setFlowerNodes(names) {
+      if (!Array.isArray(names)) {
+        console.warn("[DripMotion] setFlowerNodes 需要数组参数");
+        return;
+      }
+      flowerRuntimeConfig.manualNodeNames = names.filter(Boolean).map((x) => String(x).trim());
+      if (!lastLoadedModelRoot) return;
+      setupFlowerRig(lastLoadedModelRoot);
+      console.log("[DripMotion] 已更新花瓣节点映射:", flowerRuntimeConfig.manualNodeNames);
+    },
+    clearFlowerNodes() {
+      flowerRuntimeConfig.manualNodeNames = [];
+      if (!lastLoadedModelRoot) return;
+      setupFlowerRig(lastLoadedModelRoot);
+      console.log("[DripMotion] 已清除手动花瓣节点映射");
+    },
+  };
+
+  window.dripDebug = {
+    ...(window.dripDebug || {}),
+    ...api,
+  };
+}
+
+function setFlowerTarget(next, statusLabel) {
+  if (!flowerState.nodes.length) {
+    updateStatus("花朵开合：未识别到可控节点");
+    return;
+  }
+  flowerState.target = clamp(next, 0, 1);
+  if (statusLabel) updateStatus(statusLabel);
+}
+
+function normalizeLoadedModel(root, flipX = false) {
+  // GLB 导出坐标系倒置需要翻转；FBX 从 Blender 导出已是正向，不翻转。
+  if (flipX) {
+    root.rotation.x = Math.PI;
+  }
   root.updateMatrixWorld(true);
 
   const initialBox = new THREE.Box3().setFromObject(root);
@@ -235,6 +598,161 @@ function normalizeLoadedModel(root) {
   root.position.z -= scaledCenter.z;
   root.position.y -= scaledBox.min.y;
   root.updateMatrixWorld(true);
+}
+
+// FBX 材质统一转换为“做旧古铜”风格
+function convertFBXMaterials(root) {
+  const hashName = (name) => {
+    let h = 0;
+    const s = String(name || "mesh");
+    for (let i = 0; i < s.length; i += 1) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  };
+
+  const buildBronzeColor = (nodeName) => {
+    const h = hashName(nodeName);
+    const hue = 0.075 + (h % 8) / 320; // 铜棕色相，带轻微差异
+    const sat = 0.42 + (h % 4) * 0.025;
+    const light = 0.28 + (h % 5) * 0.022;
+    return new THREE.Color().setHSL(hue, Math.min(0.56, sat), Math.min(0.40, light));
+  };
+
+  const applyPatina = (base, nodeName) => {
+    const h = hashName(nodeName);
+    const patina = new THREE.Color().setHSL(0.47, 0.22, 0.24 + (h % 3) * 0.03); // 轻微铜绿
+    return base.clone().lerp(patina, 0.12 + (h % 3) * 0.02);
+  };
+
+  root.traverse((node) => {
+    if (!node.isMesh) return;
+    const oldMats = Array.isArray(node.material) ? node.material : [node.material];
+    const newMats = oldMats.map((m) => {
+      if (!m) return m;
+
+      const sourceColor = m.color ? m.color.clone() : new THREE.Color(0xffffff);
+      const bronzeBase = buildBronzeColor(node.name);
+      const mixed = sourceColor.clone().lerp(bronzeBase, m.map ? 0.45 : 0.78);
+      const resolvedColor = applyPatina(mixed, node.name);
+
+      const side = m.side ?? THREE.DoubleSide;
+      const transparent = m.transparent ?? false;
+      const opacity = m.opacity ?? 1;
+      const map = m.map ?? null;
+      const normalMap = m.normalMap ?? null;
+      const emissiveMap = m.emissiveMap ?? null;
+
+      const std = new THREE.MeshStandardMaterial({
+        color: resolvedColor,
+        roughness: 0.58,
+        metalness: 0.68,
+        side,
+        transparent,
+        opacity,
+      });
+      if (map) std.map = map;
+      if (normalMap) std.normalMap = normalMap;
+      std.emissive = new THREE.Color(0x140d08);
+      std.emissiveIntensity = 0.32;
+      if (emissiveMap) std.emissiveMap = emissiveMap;
+      return std;
+    });
+    node.material = Array.isArray(node.material) ? newMats : newMats[0];
+    const assigned = Array.isArray(node.material) ? node.material : [node.material];
+    assigned.forEach((mat) => {
+      if (mat) mat.needsUpdate = true;
+    });
+  });
+}
+
+function detectRingLayer(node) {
+  let current = node;
+  while (current) {
+    const n = String(current.name || "").toLowerCase();
+    if (/part_10|ringdiscinner|inner/.test(n)) return "inner";
+    if (/part_09|ringband|band|mid/.test(n)) return "middle";
+    if (/part_16|ringdiscouter|outer/.test(n)) return "outer";
+    current = current.parent;
+  }
+  return null;
+}
+
+function applyLayeredRingBronze(root) {
+  const palette = {
+    inner: {
+      color: new THREE.Color(0x4a2f21),
+      emissive: new THREE.Color(0x1a110c),
+      roughness: 0.68,
+      metalness: 0.56,
+    },
+    middle: {
+      color: new THREE.Color(0x7a4a2e),
+      emissive: new THREE.Color(0x24160d),
+      roughness: 0.56,
+      metalness: 0.66,
+    },
+    outer: {
+      color: new THREE.Color(0x9a6542),
+      emissive: new THREE.Color(0x2b1c11),
+      roughness: 0.48,
+      metalness: 0.74,
+    },
+  };
+
+  root.traverse((node) => {
+    if (!node?.isMesh) return;
+    const layer = detectRingLayer(node);
+    if (!layer) return;
+
+    const spec = palette[layer];
+    const mats = Array.isArray(node.material) ? node.material : [node.material];
+    const upgraded = mats.map((mat) => {
+      if (!mat) return mat;
+
+      let target = mat;
+      if (!mat.isMeshStandardMaterial) {
+        target = new THREE.MeshStandardMaterial({
+          map: mat.map ?? null,
+          normalMap: mat.normalMap ?? null,
+          transparent: mat.transparent ?? false,
+          opacity: mat.opacity ?? 1,
+          side: mat.side ?? THREE.DoubleSide,
+        });
+      }
+
+      target.color.copy(spec.color);
+      target.emissive.copy(spec.emissive);
+      target.emissiveIntensity = 0.36;
+      target.roughness = spec.roughness;
+      target.metalness = spec.metalness;
+      target.needsUpdate = true;
+      return target;
+    });
+
+    node.material = Array.isArray(node.material) ? upgraded : upgraded[0];
+  });
+}
+
+function focusCameraOnObject(object3d, padding = 1.35) {
+  const box = new THREE.Box3().setFromObject(object3d);
+  if (box.isEmpty()) return;
+
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z, 0.001);
+  if (!Number.isFinite(maxDim) || maxDim <= 0) return;
+
+  const fov = THREE.MathUtils.degToRad(camera.fov);
+  const fitDistance = (maxDim * padding) / (2 * Math.tan(fov / 2));
+  const direction = new THREE.Vector3(1, 0.72, 1.18).normalize();
+  const nextPos = center.clone().add(direction.multiplyScalar(fitDistance));
+
+  camera.position.copy(nextPos);
+  camera.near = Math.max(0.01, fitDistance / 100);
+  camera.far = Math.max(50, fitDistance * 20);
+  camera.updateProjectionMatrix();
+
+  controls.target.copy(center);
+  controls.update();
 }
 
 function findMotionTarget(root) {
@@ -301,8 +819,9 @@ function createMovableAssembly(root) {
   assembly.name = "TopPartRuntime";
   const pivotBox = new THREE.Box3();
   nodes.forEach((node) => pivotBox.expandByObject(node));
-  const pivotCenter = pivotBox.getCenter(new THREE.Vector3());
-  assembly.position.copy(pivotCenter);
+  const pivotCenterWorld = pivotBox.getCenter(new THREE.Vector3());
+  const pivotCenterLocal = root.worldToLocal(pivotCenterWorld.clone());
+  assembly.position.copy(pivotCenterLocal);
   root.add(assembly);
   root.updateMatrixWorld(true);
   nodes.forEach((node) => {
@@ -314,13 +833,15 @@ function createMovableAssembly(root) {
 
 function createOrbitPivot(root, moveTarget) {
   const rootBox = new THREE.Box3().setFromObject(root);
-  const rootCenter = rootBox.getCenter(new THREE.Vector3());
+  const rootCenterWorld = rootBox.getCenter(new THREE.Vector3());
   const moveWorld = new THREE.Vector3();
   moveTarget.getWorldPosition(moveWorld);
+  const rootCenterLocal = root.worldToLocal(rootCenterWorld.clone());
+  const moveLocal = root.worldToLocal(moveWorld.clone());
 
   const pivot = new THREE.Group();
   pivot.name = "OrbitPivotRuntime";
-  pivot.position.set(rootCenter.x, moveWorld.y, rootCenter.z);
+  pivot.position.set(rootCenterLocal.x, moveLocal.y, rootCenterLocal.z);
   root.add(pivot);
   root.updateMatrixWorld(true);
   pivot.attach(moveTarget);
@@ -328,52 +849,216 @@ function createOrbitPivot(root, moveTarget) {
   return pivot;
 }
 
-async function loadExternalModel() {
-  updateModelStatus("3D 模型：正在加载 dripmotion.glb …", "warn");
-  try {
-    const gltf = await modelLoader.loadAsync(MODEL_URL);
-    const modelRoot = gltf.scene;
+function createModelCenterPivot(root, parent) {
+  const rootBox = new THREE.Box3().setFromObject(root);
+  const centerWorld = rootBox.getCenter(new THREE.Vector3());
+  const parentLocalCenter = parent.worldToLocal(centerWorld.clone());
 
-    // 先打印所有节点名，方便在浏览器控制台查看模型结构
-    const nodeNames = [];
-    modelRoot.traverse((n) => { if (n.name) nodeNames.push(n.name); });
-    console.log("[DripMotion] 模型节点列表:", nodeNames);
+  const pivot = new THREE.Group();
+  pivot.name = "ModelCenterPivotRuntime";
+  pivot.position.copy(parentLocalCenter);
+  parent.add(pivot);
+  parent.updateMatrixWorld(true);
+  pivot.attach(root);
+  pivot.updateMatrixWorld(true);
+  return pivot;
+}
 
-    normalizeLoadedModel(modelRoot);
-    modelRoot.traverse((node) => {
-      if (node.isMesh) {
-        node.castShadow = true;
-        node.receiveShadow = true;
-      }
+function buildPartRegistry(root) {
+  const entries = [];
+  const missing = [];
+  PART_NODE_ORDER.forEach((name) => {
+    const node = root.getObjectByName(name);
+    if (!node) {
+      missing.push(name);
+      return;
+    }
+    entries.push({
+      name,
+      node,
+      isRing: RING_PART_NAMES.has(name),
     });
+  });
+  partDebugState.entries = entries;
+  const found = entries.length;
+  const ringFound = entries.filter((e) => e.isRing).length;
+  const bodyFound = found - ringFound;
+  updatePartDebugStatus(
+    `部件节点：主体 ${bodyFound} 个 | 圆环组 ${ringFound} 个（RingBand + DiscInner + DiscOuter）` +
+    (missing.length ? `，缺失 ${missing.join(", ")}` : "")
+  );
+}
 
-    modelAnchor.clear();
-    modelAnchor.add(modelRoot);
-    setFallbackVisible(false);   // 只要文件加载成功，就隐藏内置模型
+function applyPartDebugView() {
+  const entries = partDebugState.entries;
+  if (!entries.length) return;
 
-    const extracted = createMovableAssembly(modelRoot);
-    if (extracted) {
-      const orbitPivot = createOrbitPivot(modelRoot, extracted.assembly);
-      bindMotionTargets(extracted.assembly, orbitPivot, "external-ring", "y");
-      updateModelStatus(`3D 模型：已加载 GLB，圆圈部件已启用（${extracted.count} 个子节点）`, "ok");
-    } else {
-      const controlledNode = findMotionTarget(modelRoot);
-      if (controlledNode) {
-        const orbitPivot = createOrbitPivot(modelRoot, controlledNode);
-        bindMotionTargets(controlledNode, orbitPivot, "external", "y");
-        updateModelStatus(`3D 模型：已加载 GLB，控制节点：${controlledNode.name}`, "ok");
-      } else {
-        bindMotionTargets(modelRoot, modelRoot, "external-root", "y");
-        updateModelStatus("3D 模型：已加载 GLB，未拆分出圆圈部件，当前控制整体", "warn");
+  entries.forEach((entry) => {
+    if (partDebugState.mode === "all") {
+      entry.node.visible = true;
+    } else if (partDebugState.mode === "ring") {
+      entry.node.visible = entry.isRing;
+    } else if (partDebugState.mode === "body") {
+      entry.node.visible = !entry.isRing;
+    }
+  });
+
+  const ringCount = entries.filter((e) => e.isRing).length;
+  const bodyCount = entries.length - ringCount;
+  if (partDebugState.mode === "ring") {
+    updatePartDebugStatus(`部件节点：仅显示圆环组（${ringCount} 个节点：RingBand、DiscInner、DiscOuter）`);
+  } else if (partDebugState.mode === "body") {
+    updatePartDebugStatus(`部件节点：仅显示主体（${bodyCount} 个节点，含主体纹路 Part_11~15）`);
+  } else {
+    updatePartDebugStatus(`部件节点：显示全部 — 主体 ${bodyCount} 个 | 圆环组 ${ringCount} 个`);
+  }
+}
+
+function bindPartDebugUI() {
+  if (partDebugState.uiBound) return;
+  partDebugState.uiBound = true;
+
+  partBodyOnlyBtn?.addEventListener("click", () => {
+    if (!partDebugState.entries.length) return;
+    partDebugState.mode = "body";
+    applyPartDebugView();
+  });
+
+  partRingOnlyBtn?.addEventListener("click", () => {
+    if (!partDebugState.entries.length) return;
+    partDebugState.mode = "ring";
+    applyPartDebugView();
+  });
+
+  partShowAllBtn?.addEventListener("click", () => {
+    if (!partDebugState.entries.length) return;
+    partDebugState.mode = "all";
+    applyPartDebugView();
+  });
+}
+
+async function loadExternalModel() {
+  // 加载外部模型期间保持内置模型隐藏，避免先闪出试用模型
+  setFallbackVisible(false);
+
+  let lastError = null;
+  for (const candidate of MODEL_CANDIDATES) {
+    const modelUrl = new URL(candidate, import.meta.url).href;
+    const fileName = getDisplayFileName(modelUrl);
+    const isFBX = /\.fbx(\?|$)/i.test(modelUrl);
+
+    // 先用 HEAD 检查文件是否存在，避免为缺失文件报错
+    if (isFBX) {
+      try {
+        const probe = await fetch(modelUrl, { method: "HEAD" });
+        if (!probe.ok) {
+          console.log(`[DripMotion] FBX 候选文件不存在 (${probe.status})，跳过：${fileName}`);
+          continue;
+        }
+      } catch {
+        console.log(`[DripMotion] FBX 候选文件无法访问，跳过：${fileName}`);
+        continue;
       }
     }
-  } catch (error) {
-    console.warn("[DripMotion] 外部 3D 模型加载失败，回退到内置演示模型", error);
-    modelAnchor.clear();
-    setFallbackVisible(true);
-    bindMotionTargets(topPivot, topPivot, "fallback");
-    updateModelStatus("3D 模型：加载失败，当前使用内置演示模型", "warn");
+
+    updateModelStatus(`3D 模型：正在加载 ${fileName} …`, "warn");
+    try {
+      let modelRoot;
+      if (isFBX) {
+        // FBXLoader 直接返回 THREE.Group
+        modelRoot = await fbxLoader.loadAsync(modelUrl);
+      } else {
+        // GLTFLoader 返回 gltf 对象，场景在 gltf.scene
+        const gltf = await modelLoader.loadAsync(modelUrl);
+        modelRoot = gltf.scene;
+      }
+
+      const meshCount = countRenderableMeshes(modelRoot);
+      if (meshCount === 0) {
+        throw new Error(`模型 ${fileName} 不包含可渲染 Mesh`);
+      }
+
+      // 打印所有节点名，方便在浏览器控制台查看模型结构
+      const nodeNames = [];
+      modelRoot.traverse((n) => { if (n.name) nodeNames.push(n.name); });
+      console.log("[DripMotion] 模型节点列表:", nodeNames);
+      console.log(`[DripMotion] 已加载模型 ${fileName}（${isFBX ? "FBX" : "GLB"}），mesh 数量：${meshCount}`);
+
+      // 你的 ImageToStl.com_999.fbx 需要翻转；其余 FBX 通常不需要翻转
+      const needsFlipX = !isFBX || /imagetostl\.com_999\.fbx/i.test(fileName);
+      normalizeLoadedModel(modelRoot, needsFlipX);
+
+      if (isFBX) {
+        // FBX 材质转换为 MeshStandardMaterial，修复白色显示问题
+        convertFBXMaterials(modelRoot);
+      }
+
+      // 圆盘内-中-外三层应用不同深浅的做旧古铜色
+      applyLayeredRingBronze(modelRoot);
+
+      modelRoot.traverse((node) => {
+        if (node.isMesh) {
+          node.castShadow = true;
+          node.receiveShadow = true;
+        }
+      });
+      enforceMeshVisibility(modelRoot);
+      if (FORCE_DEBUG_MODEL_MATERIAL) {
+        applyDebugMaterial(modelRoot);
+      }
+      if (FORCE_WIREFRAME_OVERLAY) {
+        addWireframeOverlay(modelRoot);
+      }
+      if (FORCE_POINTS_OVERLAY) {
+        addPointsOverlay(modelRoot);
+      }
+
+      modelAnchor.clear();
+      modelAnchor.add(modelRoot);
+      lastLoadedModelRoot = modelRoot;
+      setFallbackVisible(false);
+      modelBoundsHelper.visible = false;
+
+      focusCameraOnObject(modelRoot);
+
+      const extracted = createMovableAssembly(modelRoot);
+      if (extracted) {
+        const orbitPivot = createOrbitPivot(modelRoot, extracted.assembly);
+        bindMotionTargets(extracted.assembly, orbitPivot, "external-ring", "y");
+        updateModelStatus(`3D 模型：已加载 ${fileName}，圆圈部件已启用（${extracted.count} 个子节点）`, "ok");
+      } else {
+        const controlledNode = findMotionTarget(modelRoot);
+        if (controlledNode) {
+          const orbitPivot = createOrbitPivot(modelRoot, controlledNode);
+          bindMotionTargets(controlledNode, orbitPivot, "external", "y");
+          updateModelStatus(`3D 模型：已加载 ${fileName}，控制节点：${controlledNode.name}`, "ok");
+        } else {
+          const centerPivot = createModelCenterPivot(modelRoot, modelAnchor);
+          bindMotionTargets(modelRoot, centerPivot, "external-root", "y");
+          updateModelStatus(`3D 模型：已加载 ${fileName}，未拆分出圆圈部件，当前围绕模型中心旋转`, "warn");
+        }
+      }
+
+      buildPartRegistry(modelRoot);
+      bindPartDebugUI();
+      partDebugState.mode = "all";
+      applyPartDebugView();
+      setupFlowerRig(modelRoot);
+      return;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[DripMotion] 模型加载失败：${fileName}，尝试下一个候选文件`, error);
+    }
   }
+
+  console.error("[DripMotion] 外部 3D 模型加载失败，回退到内置演示模型", lastError);
+  modelAnchor.clear();
+  setFallbackVisible(true);
+  modelBoundsHelper.visible = false;
+  bindMotionTargets(topPivot, topPivot, "fallback");
+  clearFlowerRig();
+  lastLoadedModelRoot = null;
+  updateModelStatus("3D 模型：候选文件均加载失败，当前使用内置演示模型", "warn");
 }
 
 function updateStatus(text) {
@@ -417,6 +1102,12 @@ function applyCommand(action) {
     case "stop":
       stopMotion();
       break;
+    case "flowerOpen":
+      setFlowerTarget(1, "中间花朵 - 打开中");
+      break;
+    case "flowerClose":
+      setFlowerTarget(0, "中间花朵 - 闭合中");
+      break;
     default:
       break;
   }
@@ -434,6 +1125,22 @@ function stepPhysics(delta) {
 
   if (motionState.rotateDir !== 0) {
     motionState.rotationOffset += motionState.rotateDir * motionState.rotateSpeed * delta;
+  }
+
+  if (flowerState.nodes.length) {
+    const diff = flowerState.target - flowerState.openness;
+    if (Math.abs(diff) > 0.0001) {
+      const step = Math.min(Math.abs(diff), flowerState.speed * delta);
+      flowerState.openness += Math.sign(diff) * step;
+      applyFlowerPose();
+
+      if (Math.abs(flowerState.target - flowerState.openness) < 0.005) {
+        flowerState.openness = flowerState.target;
+        applyFlowerPose();
+        if (flowerState.target >= 0.99) updateStatus("中间花朵 - 已打开");
+        if (flowerState.target <= 0.01) updateStatus("中间花朵 - 已闭合");
+      }
+    }
   }
 
   syncMotionBinding();
@@ -474,6 +1181,10 @@ const HAND_COMMAND_MAP = {
   moveDown: "moveDown",
   rotateLeft: "rotateLeft",
   rotateRight: "rotateRight",
+  flowerOpen: "flowerOpen",
+  flowerClose: "flowerClose",
+  openFlower: "flowerOpen",
+  closeFlower: "flowerClose",
   stop: "stop",
 };
 
@@ -622,11 +1333,14 @@ async function ensureBackendAutoStart() {
 }
 
 function handleBridgeMessage(event) {
+  if (typeof event.data !== "string") return;
+  const raw = event.data.trim();
+  if (!raw || !raw.startsWith("{")) return;
   try {
-    const data = JSON.parse(event.data);
+    const data = JSON.parse(raw);
     handleBridgeEvent(data);
-  } catch (err) {
-    console.warn("无法解析桥接消息", err);
+  } catch {
+    // Ignore heartbeat/non-JSON noise from bridge endpoint.
   }
 }
 
@@ -712,9 +1426,19 @@ async function callModuleControl(target, action) {
       }
     }
   } catch (err) {
-    console.warn("控制模块失败", err);
+    const isNetworkError = err instanceof TypeError;
+    if (isNetworkError) {
+      console.warn("控制模块失败：bridge 服务未连接（127.0.0.1:5051）");
+    } else {
+      console.error("控制模块失败", err);
+    }
     setModuleState(target, false, true);
-    updateBridgeStatus("桥接服务：无法连接后端控制接口", "error");
+    updateBridgeStatus(
+      isNetworkError
+        ? "桥接服务：连接失败，请先启动 bridge（127.0.0.1:5051）"
+        : "桥接服务：无法连接后端控制接口",
+      "error"
+    );
   }
 }
 
@@ -843,6 +1567,7 @@ if (voiceStopBtn) voiceStopBtn.addEventListener("click", () => callModuleControl
 window.addEventListener("resize", () => resizeRenderer());
 resizeRenderer();
 syncMotionBinding();
+initFlowerDebugApi();
 loadExternalModel();
 connectBridge();
 stopMotion();
