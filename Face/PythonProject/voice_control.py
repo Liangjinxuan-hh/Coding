@@ -64,10 +64,10 @@ def voice_recognition_thread():
     global V_VOICE_AVAIL, V_CURRENT_VOICE_STATUS, V_LAST_SPEECH
 
     recognizer = sr.Recognizer()
-    microphone = sr.Microphone()
 
     # 检查PyAudio是否可用
     try:
+        microphone = sr.Microphone()
         sr.Microphone.list_microphone_names()
         source = microphone
     except Exception as e:

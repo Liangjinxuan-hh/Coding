@@ -3,21 +3,53 @@ import mediapipe as mp
 import time
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox
+from urllib import request
 import numpy as np
+import base64
 
-from config import CONFIG, load_config, ser, LEFT_EYE_EAR_POINTS, RIGHT_EYE_EAR_POINTS, LAST_COMMAND_SENT
-from serial_comms import initialize_serial, send_command, serial_status, receive_data
+import config as app_config
+from config import CONFIG, load_config, LEFT_EYE_EAR_POINTS, RIGHT_EYE_EAR_POINTS, LAST_COMMAND_SENT
+from serial_comms import initialize_serial, send_command, receive_data
 from face_analysis import eye_aspect_ratio, mouth_aspect_ratio, detect_face_direction
 from voice_control import voice_recognition_thread, V_CURRENT_VOICE_STATUS, V_VOICE_AVAIL, V_LAST_SPEECH, speak_text, \
     V_WAKE_DETECTED
 from ui_utils import show_settings_window, get_chinese_font, draw_text
 from ui_manager import Button
+from web_bridge import publish_face_snapshot, publish_voice_state, publish_face_frame
 
 # 全局变量
 mouse_click_pos = None
 current_face_status = "等待检测..."
 WINDOW_NAME = "Face & Voice Control"
+FACE_TASK_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+    "face_landmarker/float16/latest/face_landmarker.task"
+)
+FACE_TASK_MODEL_PATH = Path(__file__).resolve().with_name("face_landmarker.task")
+
+# Tasks 模式下的人脸轮廓线索引（基于 FaceMesh 常用关键点）
+FACE_CONTOUR_PATHS = [
+    # 脸部外轮廓
+    [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377,
+     152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10],
+    # 左眉
+    [70, 63, 105, 66, 107, 55, 65, 52, 53, 46],
+    # 右眉
+    [336, 296, 334, 293, 300, 285, 295, 282, 283, 276],
+    # 左眼
+    [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246, 33],
+    # 右眼
+    [263, 249, 390, 373, 374, 380, 381, 382, 362, 398, 384, 385, 386, 387, 388, 466, 263],
+    # 鼻梁/鼻翼
+    [168, 6, 197, 195, 5, 4, 1, 19, 94, 2, 164, 0],
+    # 外唇
+    [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318, 402, 317, 14, 87, 178,
+     88, 95, 61],
+    # 内唇
+    [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95, 78],
+]
 
 
 def mouse_callback(event, x, y, flags, param):
@@ -25,6 +57,33 @@ def mouse_callback(event, x, y, flags, param):
     global mouse_click_pos
     if event == cv2.EVENT_LBUTTONDOWN:
         mouse_click_pos = (x, y)
+
+
+def ensure_face_task_model() -> str:
+    """确保 FaceLandmarker 模型存在，缺失时自动下载。"""
+    if FACE_TASK_MODEL_PATH.exists():
+        return str(FACE_TASK_MODEL_PATH)
+
+    print("未检测到 face_landmarker.task，开始下载模型...")
+    request.urlretrieve(FACE_TASK_MODEL_URL, str(FACE_TASK_MODEL_PATH))
+    print(f"模型下载完成: {FACE_TASK_MODEL_PATH}")
+    return str(FACE_TASK_MODEL_PATH)
+
+
+def draw_tasks_landmarks(image, landmarks):
+    """在 Tasks API 返回的关键点上绘制人脸轮廓线。"""
+    h, w, _ = image.shape
+    points = [(int(lm.x * w), int(lm.y * h)) for lm in landmarks]
+
+    for path in FACE_CONTOUR_PATHS:
+        last_idx = None
+        for idx in path:
+            if idx < 0 or idx >= len(points):
+                last_idx = None
+                continue
+            if last_idx is not None:
+                cv2.line(image, points[last_idx], points[idx], (0, 255, 0), 1, cv2.LINE_AA)
+            last_idx = idx
 
 
 def main(tk_root):
@@ -49,14 +108,38 @@ def main(tk_root):
         messagebox.showerror("错误", "无法打开摄像头。请检查设备和配置。")
         return
 
-    # 初始化MediaPipe Face Mesh
-    mp_face_mesh = mp.solutions.face_mesh
-    face_mesh = mp_face_mesh.FaceMesh(
-        max_num_faces=1,
-        refine_landmarks=True,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
-    )
+    # 初始化MediaPipe Face Mesh（若可用）
+    mp_face_mesh = None
+    face_mesh = None
+    face_landmarker = None
+    use_tasks_api = not hasattr(mp, "solutions")
+    if not use_tasks_api:
+        mp_face_mesh = mp.solutions.face_mesh
+        face_mesh = mp_face_mesh.FaceMesh(
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+    else:
+        try:
+            model_path = ensure_face_task_model()
+            BaseOptions = mp.tasks.BaseOptions
+            VisionRunningMode = mp.tasks.vision.RunningMode
+            FaceLandmarker = mp.tasks.vision.FaceLandmarker
+            FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
+            face_landmarker = FaceLandmarker.create_from_options(
+                FaceLandmarkerOptions(
+                    base_options=BaseOptions(model_asset_path=model_path),
+                    running_mode=VisionRunningMode.VIDEO,
+                    num_faces=1,
+                )
+            )
+            print("已启用 MediaPipe Tasks FaceLandmarker。")
+        except Exception as e:
+            messagebox.showerror("错误", f"初始化 FaceLandmarker 失败: {e}")
+            cap.release()
+            return
 
     # 状态控制变量
     last_eye_state = "睁眼"
@@ -71,6 +154,8 @@ def main(tk_root):
     EAR_HISTORY_LENGTH = 300
     CALIBRATION_FRAMES = 150
     calibrated = False
+    last_voice_payload = ("", "")
+    last_frame_push = 0.0
 
     # **关键修改 1: 设置窗口为可缩放**
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
@@ -83,11 +168,20 @@ def main(tk_root):
 
         # 翻转图像，使其像镜子
         image = cv2.flip(image, 1)
-        image.flags.writeable = False
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        results = face_mesh.process(image)
-        image.flags.writeable = True
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        results = None
+        task_face_landmarks = None
+
+        if use_tasks_api:
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
+            task_result = face_landmarker.detect_for_video(mp_image, int(time.time() * 1000))
+            if task_result.face_landmarks:
+                task_face_landmarks = task_result.face_landmarks[0]
+        else:
+            image.flags.writeable = False
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            results = face_mesh.process(rgb_image)
+            image.flags.writeable = True
 
         # **关键修改 2: 动态获取尺寸和计算 UI 元素位置**
         h, w, _ = image.shape
@@ -115,19 +209,26 @@ def main(tk_root):
             mouse_click_pos = None  # 重置点击位置
 
         landmarks = None
-        if results.multi_face_landmarks:
-            landmarks = results.multi_face_landmarks[0].landmark
+        direction = "LOOK_CENTER"
+        current_eye_state = last_eye_state
+        current_mouth_state = last_mouth_state
+        has_face = bool(task_face_landmarks) if use_tasks_api else bool(results and results.multi_face_landmarks)
+        if has_face:
+            landmarks = task_face_landmarks if use_tasks_api else results.multi_face_landmarks[0].landmark
 
             # 人脸网格绘制 (如果配置开启)
             if CONFIG['DRAW_MESH']:
-                mp_drawing = mp.solutions.drawing_utils
-                mp_drawing.draw_landmarks(
-                    image=image,
-                    landmark_list=results.multi_face_landmarks[0],
-                    connections=mp_face_mesh.FACEMESH_CONTOURS,
-                    landmark_drawing_spec=None,
-                    connection_drawing_spec=mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=1, circle_radius=1)
-                )
+                if use_tasks_api:
+                    draw_tasks_landmarks(image, landmarks)
+                else:
+                    mp_drawing = mp.solutions.drawing_utils
+                    mp_drawing.draw_landmarks(
+                        image=image,
+                        landmark_list=results.multi_face_landmarks[0],
+                        connections=mp_face_mesh.FACEMESH_CONTOURS,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=1, circle_radius=1)
+                    )
 
             # --- EAR 动态校准 ---
             left_ear = eye_aspect_ratio(landmarks, LEFT_EYE_EAR_POINTS, image)
@@ -218,6 +319,26 @@ def main(tk_root):
                 ear_history = []
                 calibrated = False
 
+        publish_face_snapshot({
+            "status_text": current_face_status,
+            "eye": current_eye_state,
+            "mouth": current_mouth_state,
+            "direction": direction,
+            "calibrated": calibrated,
+            "voice_mode": "voice" if V_WAKE_DETECTED[0] else "face",
+            "serial_status": app_config.serial_status,
+            "last_command": LAST_COMMAND_SENT[0],
+        })
+
+        now_ts = time.time()
+        if now_ts - last_frame_push > 0.35:
+            preview = cv2.resize(image, (480, int(image.shape[0] * 480 / image.shape[1])))
+            success, buffer = cv2.imencode(".jpg", preview, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+            if success:
+                encoded = base64.b64encode(buffer).decode("ascii")
+                publish_face_frame(encoded)
+                last_frame_push = now_ts
+
         # --- UI 绘制 (使用动态计算的坐标和尺寸) ---
         current_line_y = padding  # 初始行Y坐标
 
@@ -254,6 +375,10 @@ def main(tk_root):
         image = draw_text(image, last_speech, (padding, current_line_y), font_scale, (0, 165, 255), False,
                           chinese_font_path)
 
+        if (V_CURRENT_VOICE_STATUS[0], V_LAST_SPEECH[0]) != last_voice_payload:
+            publish_voice_state(V_CURRENT_VOICE_STATUS[0], V_LAST_SPEECH[0])
+            last_voice_payload = (V_CURRENT_VOICE_STATUS[0], V_LAST_SPEECH[0])
+
         # 4. 动态阈值显示
         # **修正点 3**
         current_line_y += int(line_height * 1.5)
@@ -269,7 +394,7 @@ def main(tk_root):
         # 5. 系统状态显示
         # **修正点 4 (报错行)**
         current_line_y += int(line_height * 1.5)
-        image = draw_text(image, serial_status, (padding, current_line_y), font_scale, (200, 200, 200), False,
+        image = draw_text(image, app_config.serial_status, (padding, current_line_y), font_scale, (200, 200, 200), False,
                           chinese_font_path)
         current_line_y += line_height
         image = draw_text(image, f"最后命令: {LAST_COMMAND_SENT[0]}", (padding, current_line_y), font_scale,
@@ -293,13 +418,16 @@ def main(tk_root):
             break
 
     # 清理资源
-    face_mesh.close()
+    if face_mesh:
+        face_mesh.close()
+    if face_landmarker:
+        face_landmarker.close()
     cap.release()
     cv2.destroyAllWindows()
     # 退出前关闭串口
-    if ser and ser.is_open:
+    if app_config.ser and app_config.ser.is_open:
         try:
-            ser.close()
+            app_config.ser.close()
         except Exception:
             pass
     print("程序已退出。")

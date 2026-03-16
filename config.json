@@ -1,0 +1,9 @@
+{
+    "SERIAL_PORT": "COM3",
+    "BAUD_RATE": 9600,
+    "MOUTH_THRESHOLD": 0.13,
+    "EYE_SENSITIVITY": 0.7,
+    "COMMAND_TIMEOUT": 10,
+    "WAKE_WORD": "狄仁杰",
+    "DRAW_MESH": true
+}

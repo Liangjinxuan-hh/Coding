@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>滴动仪 · 三维交互面板</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div class="noise-overlay" aria-hidden="true"></div>
+    <main class="app-shell">
+      <header class="hero">
+        <span class="hero__tag">DripMotion Lite</span>
+        <h1>滴动仪智能交互 · 基础功能台</h1>
+        <p>
+          该页面复刻 Unity 设计思路：80% 画布展示 3D 模型，下方控制条提供上移、下移、左转、右转、停止操作，右上角实时反馈上表面部件状态，并保留语音 / 手势指令接入位。
+        </p>
+        <div id="bridgeStatus" class="bridge-status">桥接服务：未连接</div>
+      </header>
+
+      <section class="module-control" aria-label="交互模块控制">
+        <div class="module-control__intro">
+          <h2>交互模块控制</h2>
+          <p>需要时才打开摄像头：启动面部或手势模块会占用系统摄像头资源，结束必须点击对应“停止”按钮。</p>
+        </div>
+        <div class="module-control__buttons">
+          <button id="faceStart" class="module-btn">开启面部交互</button>
+          <button id="faceStop" class="module-btn module-btn--stop" disabled>结束面部交互</button>
+          <button id="handStart" class="module-btn">开启手势交互</button>
+          <button id="handStop" class="module-btn module-btn--stop" disabled>结束手势交互</button>
+        </div>
+        <div class="module-control__status">
+          <span id="faceState" class="chip chip--idle">面部：未启动</span>
+          <span id="handState" class="chip chip--idle">手势：未启动</span>
+        </div>
+      </section>
+
+      <section class="viewer" aria-label="滴动仪 3D 视图">
+        <canvas id="dripCanvas" aria-label="3D 模型画布" role="img"></canvas>
+        <div class="status-panel" aria-live="polite">
+          <p class="status-panel__label">当前状态</p>
+          <p id="statusText" class="status-panel__value">上表面部件 - 就绪</p>
+          <div class="status-panel__metrics">
+            <div>
+              <span class="metric-label">高度</span>
+              <span id="heightValue" class="metric-value">0 cm</span>
+            </div>
+            <div>
+              <span class="metric-label">角度</span>
+              <span id="angleValue" class="metric-value">0°</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="control-dock" aria-label="核心控制按钮">
+        <button class="control-btn" data-command="moveUp">上移</button>
+        <button class="control-btn" data-command="moveDown">下移</button>
+        <button class="control-btn" data-command="rotateLeft">左转</button>
+        <button class="control-btn" data-command="rotateRight">右转</button>
+        <button class="control-btn control-btn--stop" data-command="stop">停止</button>
+      </section>
+
+      <section class="insight-grid" aria-label="传感器状态">
+        <article class="insight-card" id="faceCard">
+          <header>
+            <h2>面部交互</h2>
+            <span id="faceMode" class="badge">等待</span>
+          </header>
+          <div class="video-wrapper">
+            <img id="faceStream" class="insight-video" alt="面部摄像头画面" />
+          </div>
+          <p id="faceStatus">当前状态：等待检测...</p>
+          <div class="insight-row"><span>方向</span><strong id="faceDirection">CENTER</strong></div>
+          <div class="insight-row"><span>眼睛</span><strong id="faceEye">睁眼</strong></div>
+          <div class="insight-row"><span>嘴部</span><strong id="faceMouth">闭嘴</strong></div>
+          <div class="insight-row"><span>串口</span><strong id="faceSerial">--</strong></div>
+          <div class="insight-row"><span>最后指令</span><strong id="faceCommand">--</strong></div>
+        </article>
+
+        <article class="insight-card" id="handCard">
+          <header>
+            <h2>手势交互</h2>
+            <span id="handLastAction" class="badge">未激活</span>
+          </header>
+          <div class="video-wrapper">
+            <img id="handStream" class="insight-video" alt="手势摄像头画面" />
+          </div>
+          <p>实时映射左右手的 LED 列与手势动作，驱动 3D 控制命令。</p>
+          <div class="led-grid" id="handLedGrid" aria-label="LED 列可视化"></div>
+          <ul id="handGestureList" class="gesture-log" aria-label="最近手势"></ul>
+        </article>
+      </section>
+
+      <section class="bridge-panel" aria-label="语音 / 手势指令示例">
+        <div class="bridge-panel__column">
+          <h2>语音 / 手势桥接</h2>
+          <p>
+            页面内置 `CommandHub`：外部模块可调用 <code>window.DripCommandHub.send(command)</code>
+            或通过 `postMessage` 发送 { type: "dd-command", payload: "上移" } 来触发动作。
+          </p>
+          <ul>
+            <li>LD3320 等串口模块：解析语音后调用 send("上移")</li>
+            <li>APDS-9960 手势：识别后映射到上移 / 下移 / 左转 / 右转 / 停止</li>
+            <li>Python / WebSocket 网关：将指令透传到本页面</li>
+          </ul>
+        </div>
+        <div class="bridge-panel__column">
+          <label for="commandInput">快速注入模拟指令</label>
+          <div class="command-injector">
+            <input id="commandInput" type="text" placeholder="输入 上移 / 下移 / 左转 / 右转 / 停止" />
+            <button id="commandSend">注入</button>
+          </div>
+          <div class="bridge-hints">
+            <p>也可在控制台执行：<br /><strong>window.DripCommandHub.send("上移")</strong></p>
+            <p>或发送 <strong>window.postMessage({ type: "dd-command", payload: "左转" })</strong></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="browser-ml">
+        <h3>浏览器端手势/人脸识别 (MediaPipe Tasks)</h3>
+        <button id="btnStartBrowserML">启动摄像头识别</button>
+        <div id="browserMlViewport" style="position:relative; width:480px; height:360px;">
+          <video id="cam" playsinline autoplay muted style="width:100%; height:100%; background:#000;"></video>
+          <canvas id="overlay" width="480" height="360" style="position:absolute; left:0; top:0; pointer-events:none;"></canvas>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

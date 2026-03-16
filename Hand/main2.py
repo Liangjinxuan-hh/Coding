@@ -3,11 +3,16 @@ import mediapipe as mp
 import numpy as np
 import math
 import time
+import base64
+
+from web_bridge import publish_hand_snapshot, publish_hand_command, publish_hand_frame
 
 # --- 1. MediaPipe 初始化 ---
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
-mp_drawing_styles = mp.solutions.drawing_styles
+MP_HAS_SOLUTIONS = hasattr(mp, "solutions")
+if MP_HAS_SOLUTIONS:
+    mp_hands = mp.solutions.hands
+    mp_drawing = mp.solutions.drawing_utils
+    mp_drawing_styles = mp.solutions.drawing_styles
 
 BaseOptions = mp.tasks.BaseOptions
 HandLandmarker = mp.tasks.vision.HandLandmarker
@@ -15,7 +20,10 @@ HandLandmarkerOptions = mp.tasks.vision.HandLandmarkerOptions
 HandLandmarkerResult = mp.tasks.vision.HandLandmarkerResult
 VisionRunningMode = mp.tasks.vision.RunningMode
 
-from mediapipe.framework.formats import landmark_pb2
+try:
+    from mediapipe.framework.formats import landmark_pb2
+except Exception:
+    landmark_pb2 = None
 
 detection_results = None
 
@@ -55,9 +63,9 @@ LED_COLORS = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (255, 255, 0), (0, 255, 255
 # --- 3. 手势识别状态变量 ---
 hand_data = {
     'Left': {'last_wrist_y': None, 'last_wrist_x': None, 'last_detection_time': time.time(),
-             'last_open_time': 0, 'last_closed_time': 0, 'last_v_sign_time': 0},
+             'last_open_time': 0, 'last_closed_time': 0, 'last_v_sign_time': 0, 'last_motion_emit': 0},
     'Right': {'last_wrist_y': None, 'last_wrist_x': None, 'last_detection_time': time.time(),
-              'last_open_time': 0, 'last_closed_time': 0, 'last_v_sign_time': 0}
+              'last_open_time': 0, 'last_closed_time': 0, 'last_v_sign_time': 0, 'last_motion_emit': 0}
 }
 
 BRIGHTNESS_SENSITIVITY = 0.8
@@ -66,6 +74,7 @@ FINGER_EXTENDED_THRESHOLD = 0.05
 SWIPE_SPEED_THRESHOLD = 150
 VERTICAL_SPEED_THRESHOLD = 50
 DEBOUNCE_TIME = 0.5
+HAND_COMMAND_COOLDOWN = 0.4
 
 THUMB_TIP = 4
 INDEX_FINGER_TIP = 8
@@ -125,6 +134,7 @@ def main():
     led_column_right = LEDColumn(num_leds=8)
 
     with HandLandmarker.create_from_options(options) as detector:
+        last_frame_push = 0.0
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -148,15 +158,15 @@ def main():
                     hand_label = detection_results.handedness[idx][0].category_name
                     current_hand_history = hand_data[hand_label]
 
-                    # 修复绘制部分
-                    landmark_list_for_drawing = landmark_pb2.NormalizedLandmarkList()
-                    for lm in hand_landmarks:
-                        landmark_for_drawing = landmark_list_for_drawing.landmark.add()
-                        landmark_for_drawing.x, landmark_for_drawing.y, landmark_for_drawing.z = lm.x, lm.y, lm.z
+                    if MP_HAS_SOLUTIONS and landmark_pb2 is not None:
+                        landmark_list_for_drawing = landmark_pb2.NormalizedLandmarkList()
+                        for lm in hand_landmarks:
+                            landmark_for_drawing = landmark_list_for_drawing.landmark.add()
+                            landmark_for_drawing.x, landmark_for_drawing.y, landmark_for_drawing.z = lm.x, lm.y, lm.z
 
-                    mp_drawing.draw_landmarks(frame, landmark_list_for_drawing, mp_hands.HAND_CONNECTIONS,
-                                              mp_drawing_styles.get_default_hand_landmarks_style(),
-                                              mp_drawing_styles.get_default_hand_connections_style())
+                        mp_drawing.draw_landmarks(frame, landmark_list_for_drawing, mp_hands.HAND_CONNECTIONS,
+                                                  mp_drawing_styles.get_default_hand_landmarks_style(),
+                                                  mp_drawing_styles.get_default_hand_connections_style())
 
                     wrist_landmark = hand_landmarks[WRIST]
                     current_wrist_y = wrist_landmark.y * H
@@ -191,12 +201,18 @@ def main():
                                 selected_led['brightness'] = max(0, selected_led['brightness'] - change)
                             gesture_display_info.append(f"  -> BRT: {int(selected_led['brightness'])}")
 
+                            if current_loop_time - current_hand_history['last_motion_emit'] > HAND_COMMAND_COOLDOWN:
+                                action = "moveUp" if wrist_speed_y < 0 else "moveDown"
+                                publish_hand_command(action, {"hand": hand_label, "speed": abs(wrist_speed_y)})
+                                current_hand_history['last_motion_emit'] = current_loop_time
+
                         # 颜色切换 (张开手)
                         if is_hand_open(hand_landmarks) and current_loop_time - current_hand_history[
                             'last_open_time'] > DEBOUNCE_TIME:
                             selected_led['color_idx'] = (selected_led['color_idx'] + 1) % len(LED_COLORS)
                             current_hand_history['last_open_time'] = current_loop_time
                             gesture_display_info.append(f"  -> CLR Change")
+                            publish_hand_command("rotateLeft", {"hand": hand_label})
 
                         # 开关 (握拳)
                         if is_hand_closed(hand_landmarks) and current_loop_time - current_hand_history[
@@ -204,6 +220,7 @@ def main():
                             selected_led['is_on'] = not selected_led['is_on']
                             current_hand_history['last_closed_time'] = current_loop_time
                             gesture_display_info.append(f"  -> Toggle ON/OFF")
+                            publish_hand_command("rotateRight", {"hand": hand_label})
 
                         # 全体点亮 (V字手势)
                         if is_victory_sign(hand_landmarks) and current_loop_time - current_hand_history[
@@ -215,6 +232,7 @@ def main():
                                 led['color_idx'] = current_color_idx
                             current_hand_history['last_v_sign_time'] = current_loop_time
                             gesture_display_info.append(f"  -> V-Sign: Fill All!")
+                            publish_hand_command("stop", {"hand": hand_label})
 
                     # 更新历史数据
                     current_hand_history['last_wrist_y'] = current_wrist_y
@@ -231,6 +249,21 @@ def main():
                 y_offset += 25
 
             cv2.imshow('Hand Gesture LED Control', frame)
+
+            now_ts = time.time()
+            if now_ts - last_frame_push > 0.35:
+                preview = cv2.resize(frame, (480, int(frame.shape[0] * 480 / frame.shape[1])))
+                success, buffer = cv2.imencode('.jpg', preview, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+                if success:
+                    encoded = base64.b64encode(buffer).decode('ascii')
+                    publish_hand_frame(encoded)
+                    last_frame_push = now_ts
+
+            publish_hand_snapshot({
+                "gestures": gesture_display_info,
+                "left": serialize_led_column(led_column_left),
+                "right": serialize_led_column(led_column_right),
+            })
             if cv2.waitKey(1) & 0xFF == 27:
                 break
 
@@ -275,6 +308,23 @@ def draw_led_column(frame, led_column, x_start, label):
             cv2.rectangle(frame, (x_start, led_y_start), (x_start + 50, led_y_end), (255, 255, 255), 3)  # 白色粗边框
         else:
             cv2.rectangle(frame, (x_start, led_y_start), (x_start + 50, led_y_end), (100, 100, 100), 1)  # 灰色细边框
+
+
+def serialize_led_column(led_column):
+    return [
+        {
+            "is_on": bool(led['is_on']),
+            "brightness": int(led['brightness']),
+            "color": bgr_to_hex(LED_COLORS[led['color_idx']]),
+            "selected": i == led_column.selected_led_index,
+        }
+        for i, led in enumerate(led_column.leds)
+    ]
+
+
+def bgr_to_hex(color_bgr):
+    b, g, r = color_bgr
+    return f"#{r:02X}{g:02X}{b:02X}"
 
 
 if __name__ == "__main__":

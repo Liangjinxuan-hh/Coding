@@ -1,16 +1,15 @@
-# 替换.gitignore文件为正确的忽略规则
-cat > .gitignore << 'EOF'
-# Python虚拟环境
+# Python virtual environments
 .venv/
+.venv312/
 
-# IDE配置
+# IDE/editor settings
 .idea/
+.vscode/
 
-# Python编译文件
+# Python cache/bytecode
 __pycache__/
 *.pyc
 
-# 操作系统文件
+# OS files
 .DS_Store
 Thumbs.db
-EOF
