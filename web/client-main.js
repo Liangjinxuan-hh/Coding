@@ -212,6 +212,8 @@ const FORCE_DEBUG_MODEL_MATERIAL = false;
 const FORCE_WIREFRAME_OVERLAY = false;
 const FORCE_POINTS_OVERLAY = false;
 const MODEL_CANDIDATES = [
+  // 当前模型（用户指定）
+  "./models/chaifen.fbx?v=20260324-chaifen-current",
   // FBX 优先（用户指定文件）
   "./models/ImageToStl.com_999.fbx?v=20260317-fbx-user",
   "./models/model_999.fbx?v=20260317-fbx",
@@ -220,49 +222,46 @@ const MODEL_CANDIDATES = [
   "./models/ImageToStl.com_999.glb?v=20260316-model999",
   "./models/dripmotion.glb?v=20260316-named4",
 ];
-const MODEL_TARGET_NAMES = new Set(["toppart", "top_part", "top-part", "top"]);
-// 经几何分析：Z=-42~-30 处的薄层是可动圆环，Z=12~51 处的纹路节点属于主体装饰
+const MODEL_TARGET_NAMES = new Set(["toppart", "top_part", "top-part", "top", "ringa", "ringb", "ringc", "ringd"]);
+const RING_MODULE_NAMES = ["RingA", "RingB", "RingC", "RingD"];
+// 新模型优先按 RingA~RingD 精确绑定，旧模型仍可匹配 Part_09/10/16
 const MOVABLE_RING_PATTERNS = [
+  /^ringa$/i,
+  /^ringb$/i,
+  /^ringc$/i,
+  /^ringd$/i,
   /^part_09_ringband$/i,
   /^part_10_ringdiscinner$/i,
   /^part_16_ringdiscouter$/i,
 ];
 const PART_NODE_ORDER = [
-  // 主体（静态）
-  "Part_00_BodyShellA",
-  "Part_01_BodyShellB",
-  "Part_02_BodyCoreA",
-  "Part_03_BodyCoreB",
-  "Part_04_BodyCoreC",
-  "Part_05_BodyCoreD",
-  "Part_06_BodyCoreE",
-  "Part_07_BodyCoreF",
-  "Part_08_BodyCoreG",
-  "Part_11_BodyPatternA",
-  "Part_12_BodyPatternB",
-  "Part_13_BodyPatternC",
-  "Part_14_BodyPatternD",
-  "Part_15_BodyPatternE",
-  // 圆环组（可动，3 个节点）
-  "Part_09_RingBand",
-  "Part_10_RingDiscInner",
-  "Part_16_RingDiscOuter",
+  // 新分层结构
+  "RingA",
+  "RingB",
+  "RingC",
+  "RingD",
+  "Flower",
+  "Component",
 ];
 const RING_PART_NAMES = new Set([
-  "Part_09_RingBand",
-  "Part_10_RingDiscInner",
-  "Part_16_RingDiscOuter",
+  "RingA",
+  "RingB",
+  "RingC",
+  "RingD",
 ]);
 
 // 手动指定花瓣节点名（最可靠）
 const FLOWER_PART_NAMES = [
-  // "Petal_01", "Petal_02", "Petal_03"
+  "Flower",
+  "flower",
+  "FLOWER",
 ];
 
 // 未手动指定时，按名字模式自动识别
 const FLOWER_NAME_PATTERNS = [
   /petal/i,
   /flower/i,
+  /center_flower|central_flower|center/i,
   /huaban|hua_ban|花瓣/i,
   /^part_1[1-5]_bodypattern/i,
 ];
@@ -454,10 +453,25 @@ function collectNodeNames(root) {
   return [...new Set(names)].sort();
 }
 
+function getObjectByNameLoose(root, name) {
+  if (!root || !name) return null;
+  const direct = root.getObjectByName(name);
+  if (direct) return direct;
+  const target = String(name).toLowerCase();
+  let matched = null;
+  root.traverse((node) => {
+    if (matched || !node?.name) return;
+    if (String(node.name).toLowerCase() === target) {
+      matched = node;
+    }
+  });
+  return matched;
+}
+
 function collectFlowerNodesByName(root, names) {
   const found = [];
   names.forEach((name) => {
-    const node = root.getObjectByName(name);
+    const node = getObjectByNameLoose(root, name);
     if (node?.isObject3D) found.push(node);
   });
   return found;
@@ -482,9 +496,17 @@ function setupFlowerRig(root) {
   const manualNames = flowerRuntimeConfig.manualNodeNames.length
     ? flowerRuntimeConfig.manualNodeNames
     : FLOWER_PART_NAMES;
+  const usingExplicitNames = manualNames.length > 0;
 
   if (manualNames.length) {
     picked.push(...collectFlowerNodesByName(root, manualNames));
+  }
+
+  if (!picked.length && usingExplicitNames) {
+    console.warn("[DripMotion] 手动配置的花瓣节点未命中", manualNames);
+    const allNames = collectNodeNames(root);
+    console.log("[DripMotion] 当前可用节点名:", allNames);
+    updateStatus("花朵开合：固定花瓣节点未命中，已切换自动候选");
   }
 
   if (!picked.length) {
@@ -668,9 +690,10 @@ function detectRingLayer(node) {
   let current = node;
   while (current) {
     const n = String(current.name || "").toLowerCase();
-    if (/part_10|ringdiscinner|inner/.test(n)) return "inner";
-    if (/part_09|ringband|band|mid/.test(n)) return "middle";
-    if (/part_16|ringdiscouter|outer/.test(n)) return "outer";
+    if (/ringa|part_10|ringdiscinner|inner/.test(n)) return "innerA";
+    if (/ringb|part_09|ringband|band|mid/.test(n)) return "innerB";
+    if (/ringc|part_16|ringdiscouter|outer/.test(n)) return "outerC";
+    if (/ringd|outermost/.test(n)) return "outerD";
     current = current.parent;
   }
   return null;
@@ -678,23 +701,29 @@ function detectRingLayer(node) {
 
 function applyLayeredRingBronze(root) {
   const palette = {
-    inner: {
+    innerA: {
       color: new THREE.Color(0x4a2f21),
       emissive: new THREE.Color(0x1a110c),
-      roughness: 0.68,
-      metalness: 0.56,
+      roughness: 0.7,
+      metalness: 0.52,
     },
-    middle: {
-      color: new THREE.Color(0x7a4a2e),
-      emissive: new THREE.Color(0x24160d),
-      roughness: 0.56,
-      metalness: 0.66,
+    innerB: {
+      color: new THREE.Color(0x6a412a),
+      emissive: new THREE.Color(0x23150d),
+      roughness: 0.62,
+      metalness: 0.62,
     },
-    outer: {
-      color: new THREE.Color(0x9a6542),
-      emissive: new THREE.Color(0x2b1c11),
+    outerC: {
+      color: new THREE.Color(0x8b5a3b),
+      emissive: new THREE.Color(0x2a1a10),
       roughness: 0.48,
-      metalness: 0.74,
+      metalness: 0.72,
+    },
+    outerD: {
+      color: new THREE.Color(0xa9754f),
+      emissive: new THREE.Color(0x2f1f13),
+      roughness: 0.44,
+      metalness: 0.78,
     },
   };
 
@@ -779,6 +808,15 @@ function collectNamedMovableNodes(root) {
       nodes.push(node);
     }
   });
+
+  // 优先精确使用 RingA~RingD，避免把 Flower/Component 纳入可动集合
+  const exactRingNodes = RING_MODULE_NAMES
+    .map((name) => getObjectByNameLoose(root, name))
+    .filter((node) => node?.isObject3D);
+  if (exactRingNodes.length >= 2) {
+    return exactRingNodes;
+  }
+
   return nodes;
 }
 
@@ -790,6 +828,9 @@ function collectHeuristicMovableNodes(root) {
 
   root.traverse((node) => {
     if (!node?.isMesh || !node.parent) return;
+    const nodeName = String(node.name || "").toLowerCase();
+    if (nodeName.includes("flower") || nodeName.includes("component")) return;
+
     const box = new THREE.Box3().setFromObject(node);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
@@ -868,7 +909,7 @@ function buildPartRegistry(root) {
   const entries = [];
   const missing = [];
   PART_NODE_ORDER.forEach((name) => {
-    const node = root.getObjectByName(name);
+    const node = getObjectByNameLoose(root, name);
     if (!node) {
       missing.push(name);
       return;
@@ -884,7 +925,7 @@ function buildPartRegistry(root) {
   const ringFound = entries.filter((e) => e.isRing).length;
   const bodyFound = found - ringFound;
   updatePartDebugStatus(
-    `部件节点：主体 ${bodyFound} 个 | 圆环组 ${ringFound} 个（RingBand + DiscInner + DiscOuter）` +
+    `部件节点：静态模块 ${bodyFound} 个 | 圆环组 ${ringFound} 个（RingA + RingB + RingC + RingD）` +
     (missing.length ? `，缺失 ${missing.join(", ")}` : "")
   );
 }
@@ -906,11 +947,11 @@ function applyPartDebugView() {
   const ringCount = entries.filter((e) => e.isRing).length;
   const bodyCount = entries.length - ringCount;
   if (partDebugState.mode === "ring") {
-    updatePartDebugStatus(`部件节点：仅显示圆环组（${ringCount} 个节点：RingBand、DiscInner、DiscOuter）`);
+    updatePartDebugStatus(`部件节点：仅显示圆环组（${ringCount} 个节点：RingA、RingB、RingC、RingD）`);
   } else if (partDebugState.mode === "body") {
-    updatePartDebugStatus(`部件节点：仅显示主体（${bodyCount} 个节点，含主体纹路 Part_11~15）`);
+    updatePartDebugStatus(`部件节点：仅显示静态模块（${bodyCount} 个节点，Flower 与 Component 不参与环运动）`);
   } else {
-    updatePartDebugStatus(`部件节点：显示全部 — 主体 ${bodyCount} 个 | 圆环组 ${ringCount} 个`);
+    updatePartDebugStatus(`部件节点：显示全部 — 静态模块 ${bodyCount} 个 | 圆环组 ${ringCount} 个`);
   }
 }
 
@@ -1067,19 +1108,29 @@ function updateStatus(text) {
   if (angleValue) angleValue.textContent = `${motionState.angleDeg.toFixed(0)}°`;
 }
 
+function updateMotionStatus() {
+  const moveLabel = motionState.moveDir > 0 ? "上升" : motionState.moveDir < 0 ? "下降" : "停止";
+  const rotateLabel = motionState.rotateDir > 0 ? "左转" : motionState.rotateDir < 0 ? "右转" : "停止";
+
+  if (motionState.moveDir === 0 && motionState.rotateDir === 0) {
+    updateStatus("圆环组 - 停止");
+    return;
+  }
+
+  updateStatus(`圆环组 - 竖向${moveLabel} | 水平${rotateLabel}`);
+}
+
 function startMove(dir) {
   motionState.moveDir = dir;
-  motionState.rotateDir = 0;
-  updateStatus(dir > 0 ? "上表面部件 - 上升中" : "上表面部件 - 下降中");
+  updateMotionStatus();
 }
 
 function startRotate(dir) {
   motionState.rotateDir = dir;
-  motionState.moveDir = 0;
-  updateStatus(dir > 0 ? "上表面部件 - 左转中" : "上表面部件 - 右转中");
+  updateMotionStatus();
 }
 
-function stopMotion(label = "上表面部件 - 停止") {
+function stopMotion(label = "圆环组 - 停止") {
   motionState.moveDir = 0;
   motionState.rotateDir = 0;
   updateStatus(label);
@@ -1119,8 +1170,15 @@ function stepPhysics(delta) {
     motionState.heightOffset = clamp(motionState.heightOffset + offset, motionState.limits.min, motionState.limits.max);
     const reachedTop = motionState.heightOffset >= motionState.limits.max && motionState.moveDir > 0;
     const reachedBottom = motionState.heightOffset <= motionState.limits.min && motionState.moveDir < 0;
-    if (reachedTop) stopMotion("上表面部件 - 达到最高点");
-    if (reachedBottom) stopMotion("上表面部件 - 达到最低点");
+    if (reachedTop || reachedBottom) {
+      motionState.moveDir = 0;
+      if (reachedTop) {
+        updateStatus(motionState.rotateDir === 0 ? "圆环组 - 达到最高点" : "圆环组 - 达到最高点，继续旋转");
+      }
+      if (reachedBottom) {
+        updateStatus(motionState.rotateDir === 0 ? "圆环组 - 达到最低点" : "圆环组 - 达到最低点，继续旋转");
+      }
+    }
   }
 
   if (motionState.rotateDir !== 0) {

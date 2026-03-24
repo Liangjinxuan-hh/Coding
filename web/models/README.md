@@ -2,6 +2,10 @@
 
 把你的 3D 模型文件放到这个目录下，文件名固定为：
 
+- chaifen.fbx（当前默认加载）
+
+也支持备用文件：
+
 - dripmotion.glb
 
 ## 推荐格式
@@ -42,6 +46,7 @@
 
 ## 当前页面行为
 
-- 页面启动时自动尝试加载 web/models/dripmotion.glb。
+- 页面启动时优先尝试加载 web/models/chaifen.fbx。
+- 若失败，会继续尝试其他候选模型（包括 dripmotion.glb）。
 - 加载成功后，按钮和 Face/Hand/Voice 指令会驱动 TopPart。
 - 加载失败时，页面继续使用内置演示模型，不会白屏。
