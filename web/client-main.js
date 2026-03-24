@@ -194,8 +194,9 @@ const ringStates = {};
     rotationOffset: 0,
     heightCm: 0,
     angleDeg: 0,
-    limits: { min: 0, max: 0.55 },
-    moveSpeed: 0.25,
+    // 初始值会在模型加载后按模型尺寸自适应覆盖
+    limits: { min: -0.35, max: 0.35 },
+    moveSpeed: 0.45,
     rotateSpeed: THREE.MathUtils.degToRad(60),
   };
 });
@@ -232,6 +233,15 @@ const flowerState = {
 const flowerRuntimeConfig = {
   manualNodeNames: [],
 };
+
+// RingA~D 上下起伏参数（世界坐标）
+const RING_WORLD_UP_LIFT_FACTOR = 0.06;
+const RING_WORLD_DOWN_LIFT_FACTOR = 0.02;
+const RING_WORLD_UP_LIFT_MIN = 0.03;
+const RING_WORLD_UP_LIFT_MAX = 0.2;
+const RING_WORLD_DOWN_LIFT_MIN = 0.008;
+const RING_WORLD_DOWN_LIFT_MAX = 0.06;
+const RING_LIFT_SPEED_FACTOR = 1.5;
 
 let lastLoadedModelRoot = null;
 
@@ -430,8 +440,9 @@ function syncRingMotionBinding(ring) {
   
   const state = ringStates[ring];
   if (!state) return;
-  
-  binding.moveTarget.position.y = binding.baseY + state.heightOffset;
+
+  // 将上下位移施加在旋转枢轴上，保证沿世界竖直方向起伏
+  binding.rotateTarget.position.y = binding.baseY + state.heightOffset;
   binding.rotateTarget.rotation[binding.rotationAxis] = binding.baseRotation + state.rotationOffset;
   state.heightCm = state.heightOffset * 100;
   state.angleDeg = normalizeDegrees(THREE.MathUtils.radToDeg(state.rotationOffset));
@@ -636,6 +647,60 @@ function setFlowerTarget(next, statusLabel) {
   }
   flowerState.target = clamp(next, 0, 1);
   if (statusLabel) updateStatus(statusLabel);
+}
+
+function initRingDebugApi() {
+  const api = {
+    ringStates() {
+      console.log("=== Ring States ===");
+      ["A", "B", "C", "D"].forEach((ring) => {
+        const state = ringStates[ring];
+        console.log(
+          `Ring${ring}: moveDir=${state.moveDir}, rotateDir=${state.rotateDir}, ` +
+          `heightOffset=${state.heightOffset.toFixed(3)}, rotationOffset=${(state.rotationOffset * 180 / Math.PI).toFixed(1)}°, ` +
+          `limits=[${state.limits.min}, ${state.limits.max}]`
+        );
+      });
+      return ringStates;
+    },
+    ringBindings() {
+      console.log("=== Ring Bindings ===");
+      ["A", "B", "C", "D"].forEach((ring) => {
+        const binding = ringBindings[ring];
+        console.log(
+          `Ring${ring}: ` +
+          `moveTarget=${binding.moveTarget ? binding.moveTarget.name : "null"}, ` +
+          `rotateTarget=${binding.rotateTarget ? binding.rotateTarget.name : "null"}, ` +
+          `baseY=${binding.baseY?.toFixed(3) || "null"}, ` +
+          `baseRotation=${binding.baseRotation?.toFixed(3) || "null"}`
+        );
+      });
+      return ringBindings;
+    },
+    testRingMove(ring, direction) {
+      console.log(`[Ring Debug] 测试 Ring${ring} ${direction > 0 ? "向上" : "向下"} 移动`);
+      startRingMove(ring, direction);
+      console.log(`[Ring Debug] state.moveDir set to ${direction}`);
+      return ringStates[ring];
+    },
+    testRingRotate(ring, direction) {
+      console.log(`[Ring Debug] 测试 Ring${ring} ${direction > 0 ? "左转" : "右转"}`);
+      startRingRotate(ring, direction);
+      return ringStates[ring];
+    },
+    stopRing(ring) {
+      stopRingMotion(ring);
+      console.log(`[Ring Debug] Ring${ring} 已停止`);
+      return ringStates[ring];
+    },
+  };
+  
+  window.dripDebug = {
+    ...(window.dripDebug || {}),
+    ...api,
+  };
+  
+  console.log("[DripMotion] Ring Debug API ready. Use dripDebug.ringStates() / dripDebug.ringBindings() / dripDebug.testRingMove(ring, dir)");
 }
 
 function normalizeLoadedModel(root, flipX = false) {
@@ -971,6 +1036,24 @@ function createModelCenterPivot(root, parent) {
 
 function bindPerRingMotionTargets(root) {
   // 为每个圆环（A/B/C/D）创建独立的 moveTarget 和 rotateTarget
+  const rootBox = new THREE.Box3().setFromObject(root);
+  const rootCenterLocal = root.worldToLocal(rootBox.getCenter(new THREE.Vector3()));
+  const rootSize = rootBox.getSize(new THREE.Vector3());
+  // 上下分离：上移幅度更大，下移幅度更小（先算世界坐标，再换算 root 局部坐标）
+  const desiredWorldUpLift = clamp(
+    rootSize.y * RING_WORLD_UP_LIFT_FACTOR,
+    RING_WORLD_UP_LIFT_MIN,
+    RING_WORLD_UP_LIFT_MAX
+  );
+  const desiredWorldDownLift = clamp(
+    rootSize.y * RING_WORLD_DOWN_LIFT_FACTOR,
+    RING_WORLD_DOWN_LIFT_MIN,
+    RING_WORLD_DOWN_LIFT_MAX
+  );
+  const rootScaleY = Math.max(Math.abs(root.scale.y || 0), 1e-6);
+  const upLiftLocal = desiredWorldUpLift / rootScaleY;
+  const downLiftLocal = desiredWorldDownLift / rootScaleY;
+
   let successCount = 0;
   RING_MODULE_NAMES.forEach((ringFullName) => {
     // 提取单字母键 (RingA → A, RingB → B, etc)
@@ -999,16 +1082,11 @@ function bindPerRingMotionTargets(root) {
     moveTarget.attach(ringNode);
     root.updateMatrixWorld(true);
     
-    // 记录初始高度（moveTarget 在 root 坐标系中的 Y）
-    const baseYInRoot = moveTarget.position.y;
-
     // 创建旋转枢轴（rotateTarget）
     const rotateTarget = new THREE.Group();
     rotateTarget.name = `${ringFullName}RotatePivot`;
     
     // 枢轴位置：模型中心
-    const rootBox = new THREE.Box3().setFromObject(root);
-    const rootCenterLocal = root.worldToLocal(rootBox.getCenter(new THREE.Vector3()));
     rotateTarget.position.copy(rootCenterLocal);
     root.add(rotateTarget);
     root.updateMatrixWorld(true);
@@ -1016,19 +1094,34 @@ function bindPerRingMotionTargets(root) {
     // 将 moveTarget 附加到枢轴
     rotateTarget.attach(moveTarget);
     root.updateMatrixWorld(true);
-    
-    // 在枢轴坐标系中记录 moveTarget 的初始 Y 位置
-    const baseYInPivot = moveTarget.position.y;
+
+    // 记录旋转枢轴在 root 下的初始高度，供上下起伏使用
+    const basePivotY = rotateTarget.position.y;
 
     // 保存到 ringBindings（使用单字母键）
     ringBindings[ring].moveTarget = moveTarget;
     ringBindings[ring].rotateTarget = rotateTarget;
-    ringBindings[ring].baseY = baseYInPivot;
+    ringBindings[ring].baseY = basePivotY;
     ringBindings[ring].baseRotation = 0; // 初始旋转为 0
     ringBindings[ring].rotationAxis = "y";
 
+    // 为该环设置自适应上下起伏参数
+    if (ringStates[ring]) {
+      // 当前按钮方向为翻转映射：moveUp -> dir -1, moveDown -> dir +1
+      // 因此：上移幅度对应 limits.min 的绝对值；下移幅度对应 limits.max
+      ringStates[ring].limits.min = -upLiftLocal;
+      ringStates[ring].limits.max = downLiftLocal;
+      ringStates[ring].moveSpeed = Math.max(upLiftLocal, downLiftLocal) * RING_LIFT_SPEED_FACTOR;
+    }
+
     successCount++;
-    console.log(`[Ring Binding] ${ringFullName}(${ring}) 已绑定 - baseY: ${baseYInPivot.toFixed(3)}, pivot: ${rotateTarget.name}`);
+    console.log(
+      `[Ring Binding] ${ringFullName}(${ring}) 已绑定 - pivotY: ${basePivotY.toFixed(3)}, ` +
+      `worldUp=${desiredWorldUpLift.toFixed(3)}, worldDown=${desiredWorldDownLift.toFixed(3)}, ` +
+      `localUp=${upLiftLocal.toFixed(3)}, localDown=${downLiftLocal.toFixed(3)}, ` +
+      `moveSpeed=${(Math.max(upLiftLocal, downLiftLocal) * RING_LIFT_SPEED_FACTOR).toFixed(3)}, ` +
+      `rootScaleY=${rootScaleY.toExponential(2)}, pivot: ${rotateTarget.name}`
+    );
   });
 
   // 返回成功绑定的环数（4 = 全部成功）
@@ -1277,15 +1370,23 @@ function stopMotion(label = "圆环组 - 停止") {
 
 function startRingMove(ring, dir) {
   const state = ringStates[ring];
-  if (!state) return;
+  if (!state) {
+    console.warn(`[Ring Move] Ring${ring} state not found!`);
+    return;
+  }
   state.moveDir = dir;
+  console.log(`[Ring Move] Ring${ring} moveDir=${dir}, heightOffset=${state.heightOffset.toFixed(3)}, limits=[${state.limits.min}, ${state.limits.max}]`);
   updateStatus(`Ring${ring} - ${dir > 0 ? "上升中" : "下降中"}`);
 }
 
 function startRingRotate(ring, dir) {
   const state = ringStates[ring];
-  if (!state) return;
+  if (!state) {
+    console.warn(`[Ring Rotate] Ring${ring} state not found!`);
+    return;
+  }
   state.rotateDir = dir;
+  console.log(`[Ring Rotate] Ring${ring} rotateDir=${dir}`);
   updateStatus(`Ring${ring} - ${dir > 0 ? "左转中" : "右转中"}`);
 }
 
@@ -1300,10 +1401,12 @@ function stopRingMotion(ring, label = null) {
 function applyRingCommand(ring, action) {
   switch (action) {
     case "moveUp":
-      startRingMove(ring, 1);
+      // 模型在当前坐标系下为翻转状态，上下控制方向取反
+      startRingMove(ring, -1);
       break;
     case "moveDown":
-      startRingMove(ring, -1);
+      // 模型在当前坐标系下为翻转状态，上下控制方向取反
+      startRingMove(ring, 1);
       break;
     case "rotateLeft":
       startRingRotate(ring, 1);
@@ -1847,6 +1950,7 @@ window.addEventListener("resize", () => resizeRenderer());
 resizeRenderer();
 syncMotionBinding();
 initFlowerDebugApi();
+initRingDebugApi();
 loadExternalModel();
 connectBridge();
 stopMotion();
