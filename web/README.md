@@ -4,10 +4,79 @@
 
 ## 功能概览
 
-1. **模型展示区**：Three.js 渲染的简化滴动仪模型，支持鼠标拖拽旋转、滚轮缩放。
-2. **控制按钮区**：底部五个按钮对应上移 / 下移 / 左转 / 右转 / 停止。
+1. **模型展示区**：Three.js 渲染的 chaifen.fbx 模型，支持鼠标拖拽旋转、滚轮缩放。
+2. **控制按钮区**：底部按钮对应圆环上移 / 下移 / 左转 / 右转 / 花朵打开 / 花朵闭合 / 停止。
 3. **状态反馈区**：右上角实时同步高度（cm）与角度（度），并输出中文状态文案。
-4. **语音/手势桥接**：`window.DripCommandHub` 对外暴露 `send(command)` 和 `getState()`，可被语音模块、手势识别或 Python/硬件桥接调用。
+4. **手势/语音桥接**：`window.DripCommandHub` 对外暴露 `send(command)` 和 `getState()`，可被语音模块、手势识别或 Python/硬件桥接调用。
+
+## 模型分层架构
+
+模型分为 **6 个模块**，统一用 chaifen.fbx 加载：
+
+| 模块 | 功能 | 可控性 |
+|------|------|--------|
+| **RingA** | 内环 | 上下移动 + 左右旋转 |
+| **RingB** | 次内环 | 上下移动 + 左右旋转 |
+| **RingC** | 次外环 | 上下移动 + 左右旋转 |
+| **RingD** | 外环 | 上下移动 + 左右旋转 |
+| **Flower** | 中心花朵 | 打开/闭合（缩放） |
+| **Component** | 配件 | 不参与运动 |
+
+### 圆环运动特性
+
+- **同步控制**：RingA ~ RingD 作为一个运动组，同时响应相同指令
+- **上下移动**：竖向平移 0 ~ 0.55 单位，速度 0.25 单位/秒
+- **左右旋转**：水平旋转，速度 60°/秒
+- **并行执行**：上下移动和左右旋转可同时进行（不互斥）
+- **行程限制**：到达上下限时仅停止升降，旋转可继续
+
+### 花朵特性
+
+- **原地动作**：花朵保持中心位置不变
+- **开合方式**：打开时缩放放大，闭合时恢复原大小（目前禁用中，待完善）
+
+## 按钮指令映射
+
+| 按钮文案 | 指令代码 | 作用 |
+|----------|----------|------|
+| 上移 | `moveUp` | RingA~D 向上平移 |
+| 下移 | `moveDown` | RingA~D 向下平移 |
+| 左转 | `rotateLeft` | RingA~D 逆时针旋转 |
+| 右转 | `rotateRight` | RingA~D 顺时针旋转 |
+| 花朵打开 | `flowerOpen` | Flower 放大 |
+| 花朵闭合 | `flowerClose` | Flower 缩小 |
+| 停止 | `stop` | 停止所有运动 |
+
+## 手势指令映射
+
+**Hand 模块** 可识别以下手势并自动转换为控制指令：
+
+| 手势 | 转换指令 | 对应动作 |
+|------|----------|----------|
+| (moveUp) | `moveUp` | 圆环上升 |
+| (moveDown) | `moveDown` | 圆环下降 |
+| (rotateLeft) | `rotateLeft` | 圆环左转 |
+| (rotateRight) | `rotateRight` | 圆环右转 |
+| (flowerOpen/openFlower) | `flowerOpen` | 花朵打开 |
+| (flowerClose/closeFlower) | `flowerClose` | 花朵闭合 |
+| (stop) | `stop` | 停止 |
+
+> 手势识别使用 MediaPipe Hand，具体手势定义见 `Hand/main2.py`
+
+## 面部识别指令映射
+
+**Face 模块** 可识别以下表情并自动转换为控制指令：
+
+| 面部状态 | 转换指令 | 对应动作 |
+|----------|----------|----------|
+| 向左看（LOOK_LEFT） | `rotateLeft` | 圆环左转 |
+| 向右看（LOOK_RIGHT） | `rotateRight` | 圆环右转 |
+| 睁眼（OPEN_EYES） | `moveUp` | 圆环上升 |
+| 闭眼（CLOSE_EYES） | `moveDown` | 圆环下降 |
+| 张嘴（OPEN_MOUTH） | `moveUp` | 圆环上升 |
+| 闭嘴/默认状态 | `stop` | 停止 |
+
+> 面部识别使用 MediaPipe Face Mesh，具体状态检测见 `Face/PythonProject/main.py`
 
 ## 运行方式
 
@@ -65,20 +134,22 @@ while True:
     time.sleep(0.05)
 ```
 
-## 语音 / 手势指令映射
-
-| 外部指令 | 页面动作 |
-|----------|----------|
-| 上移 / 上 / UP | moveUp |
-| 下移 / 下 / DOWN | moveDown |
-| 左转 / 左 / LEFT | rotateLeft |
-| 右转 / 右 / RIGHT | rotateRight |
-| 停止 / STOP / S | stop |
-
 ## 文件列表
 
-- `index.html`：骨架结构与语音/手势说明区。
+- `index.html`：骨架结构与交互面板。
 - `styles.css`：配色、布局、动效。
-- `app.js`：Three.js 场景、运动逻辑、CommandHub。
+- `client-main.js`：Three.js 场景、运动逻辑、命令桥接。
+- `models/chaifen.fbx`：当前加载的 3D 模型（可替换为其他 FBX/GLB）。
 
-如需将该页面嵌入现有 Python/Unity 流程，可通过 WebView2、Electron 或三方面板加载 `index.html`，同时把硬件指令转发到 `window.DripCommandHub`。需要进一步扩展（如真实 glTF 模型、串口直连、WebSocket 网桥）请告诉我。
+## 常见问题
+
+### Q: 如何快速测试按钮和控制逻辑？
+A: 刷新页面打开 `http://127.0.0.1:8081`，直接点击底部按钮即可测试圆环和花朵动作。
+
+### Q: 如何替换模型？
+A: 将新模型（FBX 或 GLB）放入 `web/models/` 目录，修改 `client-main.js` 中的 `MODEL_CANDIDATES` 列表，把新模型文件名加入即可自动加载。
+
+### Q: 为什么手势/面部识别没有响应？
+A: 确保 Bridge 服务（`bridge.server`）正在运行，且 Hand/Face 模块已启动。检查浏览器控制台是否有连接错误。
+
+如需进一步扩展（如自定义手势、新增动作），请参考 Hand 和 Face 模块的文档。

@@ -184,6 +184,22 @@ const motionState = {
   rotateSpeed: THREE.MathUtils.degToRad(60)
 };
 
+// 为RingA\RingB\RingC\RingD稍立独立的运动状态
+const ringStates = {};
+["A", "B", "C", "D"].forEach((ring) => {
+  ringStates[ring] = {
+    moveDir: 0,
+    rotateDir: 0,
+    heightOffset: 0,
+    rotationOffset: 0,
+    heightCm: 0,
+    angleDeg: 0,
+    limits: { min: 0, max: 0.55 },
+    moveSpeed: 0.25,
+    rotateSpeed: THREE.MathUtils.degToRad(60),
+  };
+});
+
 const motionBinding = {
   moveTarget: topPivot,
   rotateTarget: topPivot,
@@ -192,6 +208,19 @@ const motionBinding = {
   rotationAxis: "z",
   source: "fallback",
 };
+
+// 人RingA\RingB\RingC\RingD\u7684惬子运动绑定
+const ringBindings = {};
+["A", "B", "C", "D"].forEach((ring) => {
+  ringBindings[ring] = {
+    moveTarget: null,
+    rotateTarget: null,
+    baseY: 0,
+    baseRotation: 0,
+    rotationAxis: "z",
+    source: "ring-" + ring.toLowerCase(),
+  };
+});
 
 const flowerState = {
   openness: 0,
@@ -395,6 +424,19 @@ function syncMotionBinding() {
   motionState.angleDeg = normalizeDegrees(THREE.MathUtils.radToDeg(motionState.rotationOffset));
 }
 
+function syncRingMotionBinding(ring) {
+  const binding = ringBindings[ring];
+  if (!binding || !binding.moveTarget || !binding.rotateTarget) return;
+  
+  const state = ringStates[ring];
+  if (!state) return;
+  
+  binding.moveTarget.position.y = binding.baseY + state.heightOffset;
+  binding.rotateTarget.rotation[binding.rotationAxis] = binding.baseRotation + state.rotationOffset;
+  state.heightCm = state.heightOffset * 100;
+  state.angleDeg = normalizeDegrees(THREE.MathUtils.radToDeg(state.rotationOffset));
+}
+
 function bindMotionTargets(moveTarget, rotateTarget, source, rotationAxis = "z") {
   if (!moveTarget || !rotateTarget) return;
   motionBinding.moveTarget = moveTarget;
@@ -409,26 +451,16 @@ function bindMotionTargets(moveTarget, rotateTarget, source, rotationAxis = "z")
 function applyFlowerPose() {
   if (!flowerState.nodes.length) return;
   const t = clamp(flowerState.openness, 0, 1);
+
   flowerState.nodes.forEach((entry) => {
-    const { node, basePosition, baseRotation, baseScale, phase } = entry;
+    const { node, basePosition, baseRotation, baseScale } = entry;
     if (!node) return;
 
-    const radial = 0.045 * t;
-    const tilt = 0.34 * t;
-
+    // 当前实现：花朵完全禁用变换，保持在初始位置
+    // 待确认真正的控制方式后再启用
     node.position.copy(basePosition);
-    node.position.x += Math.cos(phase) * radial;
-    node.position.z += Math.sin(phase) * radial;
-    node.position.y += 0.012 * t;
-
     node.rotation.copy(baseRotation);
-    node.rotation.x = baseRotation.x - tilt;
-
-    node.scale.set(
-      baseScale.x * (1 + 0.20 * t),
-      baseScale.y * (1 - 0.08 * t),
-      baseScale.z * (1 + 0.20 * t)
-    );
+    node.scale.copy(baseScale);
   });
 }
 
@@ -553,7 +585,13 @@ function setupFlowerRig(root) {
   flowerState.openness = 0;
   flowerState.target = 0;
   applyFlowerPose();
-  console.log(`[DripMotion] 花朵开合节点已绑定：${flowerState.nodes.length} 个`, flowerState.nodes.map((x) => x.node.name));
+  // 保持花朵可见
+  flowerState.nodes.forEach(({ node }) => {
+    if (node) node.visible = true;
+  });
+  console.log(`[DripMotion] 花朵节点已绑定：${flowerState.nodes.length} 个`, flowerState.nodes.map((x) => x.node.name));
+  console.log("[DripMotion] 提示：在控制台执行 dripDebug.listNodeNames() 查看所有节点名");
+  console.log("[DripMotion] 提示：执行 dripDebug.setFlowerNodes(['nodename']) 手动指定花朵节点");
 }
 
 function initFlowerDebugApi() {
@@ -847,6 +885,32 @@ function collectHeuristicMovableNodes(root) {
   return nodes;
 }
 
+function createRingAssembly(root, ringName) {
+  // 获取指定圆环的节点
+  const ringNode = getObjectByNameLoose(root, ringName);
+  if (!ringNode || !ringNode.isObject3D) {
+    return null;
+  }
+
+  const assembly = new THREE.Group();
+  assembly.name = `${ringName}RunTime_Assembly`;
+  
+  // 计算圆环的中心位置
+  const box = new THREE.Box3().setFromObject(ringNode);
+  const centerWorld = box.getCenter(new THREE.Vector3());
+  const centerLocal = root.worldToLocal(centerWorld.clone());
+  
+  assembly.position.copy(centerLocal);
+  root.add(assembly);
+  root.updateMatrixWorld(true);
+  
+  // 将圆环节点附加到 assembly
+  assembly.attach(ringNode);
+  assembly.updateMatrixWorld(true);
+  
+  return { assembly, count: 1 };
+}
+
 function createMovableAssembly(root) {
   let nodes = collectNamedMovableNodes(root);
   if (nodes.length === 0) {
@@ -903,6 +967,72 @@ function createModelCenterPivot(root, parent) {
   pivot.attach(root);
   pivot.updateMatrixWorld(true);
   return pivot;
+}
+
+function bindPerRingMotionTargets(root) {
+  // 为每个圆环（A/B/C/D）创建独立的 moveTarget 和 rotateTarget
+  let successCount = 0;
+  RING_MODULE_NAMES.forEach((ringFullName) => {
+    // 提取单字母键 (RingA → A, RingB → B, etc)
+    const ring = ringFullName.charAt(ringFullName.length - 1);
+
+    const ringNode = getObjectByNameLoose(root, ringFullName);
+    if (!ringNode || !ringNode.isObject3D) {
+      console.warn(`[Ring Binding] 找不到圆环节点: ${ringFullName}`);
+      return;
+    }
+
+    // 创建 moveTarget assembly（包装 ringNode）
+    const moveTarget = new THREE.Group();
+    moveTarget.name = `${ringFullName}MoveTarget`;
+    
+    // 计算 ringNode 的中心位置
+    const box = new THREE.Box3().setFromObject(ringNode);
+    const centerWorld = box.getCenter(new THREE.Vector3());
+    
+    // assembly 定位到圆环中心
+    moveTarget.position.copy(root.worldToLocal(centerWorld.clone()));
+    root.add(moveTarget);
+    root.updateMatrixWorld(true);
+    
+    // 将 ringNode 附加到 moveTarget
+    moveTarget.attach(ringNode);
+    root.updateMatrixWorld(true);
+    
+    // 记录初始高度（moveTarget 在 root 坐标系中的 Y）
+    const baseYInRoot = moveTarget.position.y;
+
+    // 创建旋转枢轴（rotateTarget）
+    const rotateTarget = new THREE.Group();
+    rotateTarget.name = `${ringFullName}RotatePivot`;
+    
+    // 枢轴位置：模型中心
+    const rootBox = new THREE.Box3().setFromObject(root);
+    const rootCenterLocal = root.worldToLocal(rootBox.getCenter(new THREE.Vector3()));
+    rotateTarget.position.copy(rootCenterLocal);
+    root.add(rotateTarget);
+    root.updateMatrixWorld(true);
+
+    // 将 moveTarget 附加到枢轴
+    rotateTarget.attach(moveTarget);
+    root.updateMatrixWorld(true);
+    
+    // 在枢轴坐标系中记录 moveTarget 的初始 Y 位置
+    const baseYInPivot = moveTarget.position.y;
+
+    // 保存到 ringBindings（使用单字母键）
+    ringBindings[ring].moveTarget = moveTarget;
+    ringBindings[ring].rotateTarget = rotateTarget;
+    ringBindings[ring].baseY = baseYInPivot;
+    ringBindings[ring].baseRotation = 0; // 初始旋转为 0
+    ringBindings[ring].rotationAxis = "y";
+
+    successCount++;
+    console.log(`[Ring Binding] ${ringFullName}(${ring}) 已绑定 - baseY: ${baseYInPivot.toFixed(3)}, pivot: ${rotateTarget.name}`);
+  });
+
+  // 返回成功绑定的环数（4 = 全部成功）
+  return successCount;
 }
 
 function buildPartRegistry(root) {
@@ -1025,8 +1155,8 @@ async function loadExternalModel() {
       console.log("[DripMotion] 模型节点列表:", nodeNames);
       console.log(`[DripMotion] 已加载模型 ${fileName}（${isFBX ? "FBX" : "GLB"}），mesh 数量：${meshCount}`);
 
-      // 你的 ImageToStl.com_999.fbx 需要翻转；其余 FBX 通常不需要翻转
-      const needsFlipX = !isFBX || /imagetostl\.com_999\.fbx/i.test(fileName);
+      // 坐标系修正：GLB 以及部分 FBX（如 chaifen / ImageToStl.com_999）需要绕 X 轴翻转
+      const needsFlipX = !isFBX || /imagetostl\.com_999\.fbx|chaifen\.fbx/i.test(fileName);
       normalizeLoadedModel(modelRoot, needsFlipX);
 
       if (isFBX) {
@@ -1062,21 +1192,30 @@ async function loadExternalModel() {
 
       focusCameraOnObject(modelRoot);
 
-      const extracted = createMovableAssembly(modelRoot);
-      if (extracted) {
-        const orbitPivot = createOrbitPivot(modelRoot, extracted.assembly);
-        bindMotionTargets(extracted.assembly, orbitPivot, "external-ring", "y");
-        updateModelStatus(`3D 模型：已加载 ${fileName}，圆圈部件已启用（${extracted.count} 个子节点）`, "ok");
+      // 首先尝试绑定独立的 4 个环（A/B/C/D）
+      const ringBindingSuccess = bindPerRingMotionTargets(modelRoot);
+      
+      if (ringBindingSuccess === 4) {
+        // 成功绑定了全部 4 个环，使用独立控制模式
+        updateModelStatus(`3D 模型：已加载 ${fileName}，4 个独立圆环已启用`, "ok");
       } else {
-        const controlledNode = findMotionTarget(modelRoot);
-        if (controlledNode) {
-          const orbitPivot = createOrbitPivot(modelRoot, controlledNode);
-          bindMotionTargets(controlledNode, orbitPivot, "external", "y");
-          updateModelStatus(`3D 模型：已加载 ${fileName}，控制节点：${controlledNode.name}`, "ok");
+        // 未成功绑定所有环，回退到全局 assembly 模式
+        const extracted = createMovableAssembly(modelRoot);
+        if (extracted) {
+          const orbitPivot = createOrbitPivot(modelRoot, extracted.assembly);
+          bindMotionTargets(extracted.assembly, orbitPivot, "external-ring", "y");
+          updateModelStatus(`3D 模型：已加载 ${fileName}，圆圈部件已启用（${extracted.count} 个子节点）`, "ok");
         } else {
-          const centerPivot = createModelCenterPivot(modelRoot, modelAnchor);
-          bindMotionTargets(modelRoot, centerPivot, "external-root", "y");
-          updateModelStatus(`3D 模型：已加载 ${fileName}，未拆分出圆圈部件，当前围绕模型中心旋转`, "warn");
+          const controlledNode = findMotionTarget(modelRoot);
+          if (controlledNode) {
+            const orbitPivot = createOrbitPivot(modelRoot, controlledNode);
+            bindMotionTargets(controlledNode, orbitPivot, "external", "y");
+            updateModelStatus(`3D 模型：已加载 ${fileName}，控制节点：${controlledNode.name}`, "ok");
+          } else {
+            const centerPivot = createModelCenterPivot(modelRoot, modelAnchor);
+            bindMotionTargets(modelRoot, centerPivot, "external-root", "y");
+            updateModelStatus(`3D 模型：已加载 ${fileName}，未拆分出圆圈部件，当前围绕模型中心旋转`, "warn");
+          }
         }
       }
 
@@ -1136,6 +1275,50 @@ function stopMotion(label = "圆环组 - 停止") {
   updateStatus(label);
 }
 
+function startRingMove(ring, dir) {
+  const state = ringStates[ring];
+  if (!state) return;
+  state.moveDir = dir;
+  updateStatus(`Ring${ring} - ${dir > 0 ? "上升中" : "下降中"}`);
+}
+
+function startRingRotate(ring, dir) {
+  const state = ringStates[ring];
+  if (!state) return;
+  state.rotateDir = dir;
+  updateStatus(`Ring${ring} - ${dir > 0 ? "左转中" : "右转中"}`);
+}
+
+function stopRingMotion(ring, label = null) {
+  const state = ringStates[ring];
+  if (!state) return;
+  state.moveDir = 0;
+  state.rotateDir = 0;
+  updateStatus(label || `Ring${ring} - 停止`);
+}
+
+function applyRingCommand(ring, action) {
+  switch (action) {
+    case "moveUp":
+      startRingMove(ring, 1);
+      break;
+    case "moveDown":
+      startRingMove(ring, -1);
+      break;
+    case "rotateLeft":
+      startRingRotate(ring, 1);
+      break;
+    case "rotateRight":
+      startRingRotate(ring, -1);
+      break;
+    case "stop":
+      stopRingMotion(ring);
+      break;
+    default:
+      break;
+  }
+}
+
 function applyCommand(action) {
   switch (action) {
     case "moveUp":
@@ -1165,6 +1348,7 @@ function applyCommand(action) {
 }
 
 function stepPhysics(delta) {
+  // === GLOBAL MOTION (legacy, kept for backwards compatibility) ===
   if (motionState.moveDir !== 0) {
     const offset = motionState.moveDir * motionState.moveSpeed * delta;
     motionState.heightOffset = clamp(motionState.heightOffset + offset, motionState.limits.min, motionState.limits.max);
@@ -1185,6 +1369,40 @@ function stepPhysics(delta) {
     motionState.rotationOffset += motionState.rotateDir * motionState.rotateSpeed * delta;
   }
 
+  syncMotionBinding();
+
+  // === PER-RING MOTION (new independent control) ===
+  for (const ring of ["A", "B", "C", "D"]) {
+    const state = ringStates[ring];
+    if (!state) continue;
+
+    // Update height offset (move up/down)
+    if (state.moveDir !== 0) {
+      const offset = state.moveDir * state.moveSpeed * delta;
+      state.heightOffset = clamp(state.heightOffset + offset, state.limits.min, state.limits.max);
+      const reachedTop = state.heightOffset >= state.limits.max && state.moveDir > 0;
+      const reachedBottom = state.heightOffset <= state.limits.min && state.moveDir < 0;
+      if (reachedTop || reachedBottom) {
+        state.moveDir = 0;
+        if (reachedTop) {
+          updateStatus(state.rotateDir === 0 ? `Ring${ring} - 达到最高点` : `Ring${ring} - 达到最高点，继续旋转`);
+        }
+        if (reachedBottom) {
+          updateStatus(state.rotateDir === 0 ? `Ring${ring} - 达到最低点` : `Ring${ring} - 达到最低点，继续旋转`);
+        }
+      }
+    }
+
+    // Update rotation offset (rotate left/right)
+    if (state.rotateDir !== 0) {
+      state.rotationOffset += state.rotateDir * state.rotateSpeed * delta;
+    }
+
+    // Sync with 3D binding for this ring
+    syncRingMotionBinding(ring);
+  }
+
+  // === FLOWER ANIMATION ===
   if (flowerState.nodes.length) {
     const diff = flowerState.target - flowerState.openness;
     if (Math.abs(diff) > 0.0001) {
@@ -1200,8 +1418,6 @@ function stepPhysics(delta) {
       }
     }
   }
-
-  syncMotionBinding();
 }
 
 function renderLoop() {
@@ -1220,7 +1436,12 @@ const buttons = document.querySelectorAll(".control-btn");
 buttons.forEach((btn) => {
   btn.addEventListener("click", () => {
     const command = btn.dataset.command;
-    applyCommand(command);
+    const ring = btn.dataset.ring;  // RingA/B/C/D，如果没有则为 null
+    if (ring && ["A", "B", "C", "D"].includes(ring)) {
+      applyRingCommand(ring, command);
+    } else {
+      applyCommand(command);
+    }
   });
 });
 

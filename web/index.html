@@ -68,14 +68,52 @@
         </div>
       </section>
 
-      <section class="control-dock" aria-label="核心控制按钮">
-        <button class="control-btn" data-command="moveUp">上移</button>
-        <button class="control-btn" data-command="moveDown">下移</button>
-        <button class="control-btn" data-command="rotateLeft">左转</button>
-        <button class="control-btn" data-command="rotateRight">右转</button>
-        <button class="control-btn" data-command="flowerOpen">花朵打开</button>
-        <button class="control-btn" data-command="flowerClose">花朵闭合</button>
-        <button class="control-btn control-btn--stop" data-command="stop">停止</button>
+      <section class="control-dock" aria-label="二级按钮群组">
+        <div class="ring-controls">
+          <h4>圈环控制板</h4>
+          
+          <div class="ring-group">
+            <h5>RingA（内环）</h5>
+            <button class="control-btn" data-command="moveUp" data-ring="A">↑</button>
+            <button class="control-btn" data-command="moveDown" data-ring="A">↓</button>
+            <button class="control-btn" data-command="rotateLeft" data-ring="A">⮐</button>
+            <button class="control-btn" data-command="rotateRight" data-ring="A">⮑</button>
+            <button class="control-btn control-btn--stop" data-command="stop" data-ring="A">停</button>
+          </div>
+          
+          <div class="ring-group">
+            <h5>RingB（次内环）</h5>
+            <button class="control-btn" data-command="moveUp" data-ring="B">↑</button>
+            <button class="control-btn" data-command="moveDown" data-ring="B">↓</button>
+            <button class="control-btn" data-command="rotateLeft" data-ring="B">⮐</button>
+            <button class="control-btn" data-command="rotateRight" data-ring="B">⮑</button>
+            <button class="control-btn control-btn--stop" data-command="stop" data-ring="B">停</button>
+          </div>
+          
+          <div class="ring-group">
+            <h5>RingC（次外环）</h5>
+            <button class="control-btn" data-command="moveUp" data-ring="C">↑</button>
+            <button class="control-btn" data-command="moveDown" data-ring="C">↓</button>
+            <button class="control-btn" data-command="rotateLeft" data-ring="C">⮐</button>
+            <button class="control-btn" data-command="rotateRight" data-ring="C">⮑</button>
+            <button class="control-btn control-btn--stop" data-command="stop" data-ring="C">停</button>
+          </div>
+          
+          <div class="ring-group">
+            <h5>RingD（外环）</h5>
+            <button class="control-btn" data-command="moveUp" data-ring="D">↑</button>
+            <button class="control-btn" data-command="moveDown" data-ring="D">↓</button>
+            <button class="control-btn" data-command="rotateLeft" data-ring="D">⮐</button>
+            <button class="control-btn" data-command="rotateRight" data-ring="D">⮑</button>
+            <button class="control-btn control-btn--stop" data-command="stop" data-ring="D">停</button>
+          </div>
+        </div>
+        
+        <div class="flower-controls">
+          <h4>花朵控制板</h4>
+          <button class="control-btn" data-command="flowerOpen">打开</button>
+          <button class="control-btn" data-command="flowerClose">闭合</button>
+        </div>
       </section>
 
       <section class="part-debug" aria-label="部件节点锁定调试">
@@ -131,6 +169,6 @@
 
     </main>
 
-    <script type="module" src="client-main.js?v=20260317-flower-fixed3"></script>
+    <script type="module" src="client-main.js?v=20260324-flower-debug-mode"></script>
   </body>
 </html>

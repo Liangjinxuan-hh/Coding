@@ -317,6 +317,108 @@ body::after {
   color: #1c0700;
 }
 
+/* Ring controls styling */
+.ring-controls {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  padding: 12px;
+}
+
+.ring-controls > h4 {
+  margin: 0 0 8px 0;
+  font-size: 1.1rem;
+  color: var(--accent);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.ring-group {
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-soft);
+  background: rgba(7, 15, 32, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ring-group > h5 {
+  margin: 0 0 4px 0;
+  font-size: 0.95rem;
+  color: var(--fg-muted);
+  letter-spacing: 0.03em;
+}
+
+.ring-group {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  align-items: start;
+}
+
+.ring-group > h5 {
+  grid-column: 1 / -1;
+}
+
+.ring-group .control-btn {
+  flex: none;
+  padding: 10px 8px;
+  font-size: 0.9rem;
+  min-height: 44px;
+}
+
+/* Flower controls styling */
+.flower-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.flower-controls > h4 {
+  margin: 0 0 4px 0;
+  font-size: 1.1rem;
+  color: var(--accent-strong);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.flower-controls {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.flower-controls > h4 {
+  grid-column: 1 / -1;
+}
+
+.flower-controls .control-btn {
+  flex: none;
+  padding: 12px 16px;
+  font-size: 0.95rem;
+  min-height: 44px;
+}
+
+/* Responsive: tablet and above */
+@media (min-width: 768px) {
+  .ring-controls {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .control-dock {
+    flex-direction: column;
+  }
+}
+
+/* Responsive: desktop and above */
+@media (min-width: 1024px) {
+  .ring-controls {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
 .part-debug {
   padding: 20px;
   border-radius: 24px;
