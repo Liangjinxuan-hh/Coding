@@ -28,6 +28,24 @@ FACE_TASK_MODEL_URL = (
 )
 FACE_TASK_MODEL_PATH = Path(__file__).resolve().with_name("face_landmarker.task")
 
+
+def open_camera(index: int):
+    # Windows 下优先 DirectShow，减少摄像头打开耗时
+    if os.name == "nt":
+        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(index)
+    else:
+        cap = cv2.VideoCapture(index)
+
+    if cap and cap.isOpened():
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 30)
+        if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return cap
+
 # Tasks 模式下的人脸轮廓线索引（基于 FaceMesh 常用关键点）
 FACE_CONTOUR_PATHS = [
     # 脸部外轮廓
@@ -95,7 +113,7 @@ def main(tk_root):
     chinese_font_path = get_chinese_font()
 
     # 初始化摄像头
-    cap = cv2.VideoCapture(CONFIG.get('CAMERA_INDEX', 0))
+    cap = open_camera(CONFIG.get('CAMERA_INDEX', 0))
     if not cap.isOpened():
         messagebox.showerror("错误", "无法打开摄像头。请检查设备和配置。")
         return

@@ -7,8 +7,9 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>滴动仪 · 三维交互面板</title>
+    <link rel="preload" href="./models/chaifen.fbx?v=20260324-chaifen-current" as="fetch" crossorigin="anonymous" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%2365f8d3'/%3E%3Cstop offset='100%25' stop-color='%23ff9d5c'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='32' cy='32' r='30' fill='%2308161f'/%3E%3Cpath d='M32 10c6 10 8 15 8 22a8 8 0 1 1-16 0c0-7 2-12 8-22z' fill='url(%23g)'/%3E%3Ccircle cx='32' cy='44' r='7' fill='%23ffffff' fill-opacity='0.15'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260326-beige" />
     <script type="importmap">
       {
         "imports": {
@@ -23,49 +24,12 @@
     <main class="app-shell">
       <header class="hero">
         <span class="hero__tag">DripMotion Lite</span>
-        <h1>滴动仪智能交互 · 基础功能台</h1>
-        <p>
-          该页面复刻 Unity 设计思路：80% 画布展示 3D 模型，下方控制条提供上移、下移、左转、右转、停止操作，右上角实时反馈上表面部件状态，并保留语音 / 手势指令接入位。
-        </p>
+        <h1>滴动仪智能交互系统</h1>
         <div id="bridgeStatus" class="bridge-status">桥接服务：未连接</div>
       </header>
 
-      <section class="module-control" aria-label="交互模块控制">
-        <div class="module-control__intro">
-          <h2>交互模块控制</h2>
-          <p>面部与手势模块会占用摄像头；语音模块独立运行，不再挂在面部流程里。</p>
-        </div>
-        <div class="module-control__buttons">
-          <button id="faceStart" class="module-btn">开启面部交互</button>
-          <button id="faceStop" class="module-btn module-btn--stop" disabled>结束面部交互</button>
-          <button id="handStart" class="module-btn">开启手势交互</button>
-          <button id="handStop" class="module-btn module-btn--stop" disabled>结束手势交互</button>
-          <button id="voiceStart" class="module-btn">开启语音识别</button>
-          <button id="voiceStop" class="module-btn module-btn--stop" disabled>结束语音识别</button>
-        </div>
-        <div class="module-control__status">
-          <span id="faceState" class="chip chip--idle">面部：未启动</span>
-          <span id="handState" class="chip chip--idle">手势：未启动</span>
-          <span id="voiceState" class="chip chip--idle">语音：未启动</span>
-        </div>
-      </section>
-
       <section class="viewer" aria-label="滴动仪 3D 视图">
         <canvas id="dripCanvas" aria-label="3D 模型画布" role="img"></canvas>
-        <div class="status-panel" aria-live="polite">
-          <p class="status-panel__label">当前状态</p>
-          <p id="statusText" class="status-panel__value">上表面部件 - 就绪</p>
-          <div class="status-panel__metrics">
-            <div>
-              <span class="metric-label">高度</span>
-              <span id="heightValue" class="metric-value">0 cm</span>
-            </div>
-            <div>
-              <span class="metric-label">角度</span>
-              <span id="angleValue" class="metric-value">0°</span>
-            </div>
-          </div>
-        </div>
       </section>
 
       <section class="control-dock" aria-label="二级按钮群组">
@@ -109,61 +73,84 @@
           </div>
         </div>
         
+        <!--
         <div class="flower-controls">
           <h4>花朵控制板</h4>
-          <button class="control-btn" data-command="flowerOpen">打开</button>
-          <button class="control-btn" data-command="flowerClose">闭合</button>
+            <button class="control-btn" data-command="flowerOpen">打开</button>
+            <button class="control-btn" data-command="flowerClose">闭合</button>
         </div>
-      </section>
+        -->
 
-      <section class="part-debug" aria-label="部件节点锁定调试">
-        <h3>部件节点锁定</h3>
-        <div class="part-debug__buttons">
+        <!--
+        <div class="part-lock-controls" aria-label="部件节点锁定调试">
+          <h4>部件节点锁定</h4>
+          <div class="part-debug__buttons">
             <button id="partBodyOnly" class="control-btn">仅显示主体</button>
             <button id="partRingOnly" class="control-btn">仅显示圆环</button>
-          <button id="partShowAll" class="control-btn control-btn--stop">显示全部部件</button>
+            <button id="partShowAll" class="control-btn control-btn--stop">显示全部部件</button>
+          </div>
         </div>
-        <p id="partDebugStatus" class="part-debug__status">部件节点：等待模型加载...</p>
+        -->
       </section>
 
       <section class="insight-grid" aria-label="传感器状态">
         <article class="insight-card" id="faceCard">
           <header>
             <h2>面部交互</h2>
-            <span id="faceMode" class="badge">未校准</span>
+            <div class="header-tags">
+              <span id="faceMode" class="badge">未校准</span>
+              <span id="faceState" class="chip chip--idle">面部：未启动</span>
+            </div>
           </header>
           <div class="video-wrapper">
             <img id="faceStream" class="insight-video" alt="面部摄像头画面" />
           </div>
           <p id="faceStatus">当前状态：等待检测...</p>
-          <div class="insight-row"><span>方向</span><strong id="faceDirection">CENTER</strong></div>
-          <div class="insight-row"><span>眼睛</span><strong id="faceEye">睁眼</strong></div>
-          <div class="insight-row"><span>嘴部</span><strong id="faceMouth">闭嘴</strong></div>
-          <div class="insight-row"><span>串口</span><strong id="faceSerial">--</strong></div>
-          <div class="insight-row"><span>最后指令</span><strong id="faceCommand">--</strong></div>
+          <div class="module-inline" aria-label="面部交互控制">
+            <div class="module-inline__buttons">
+              <button id="faceStart" class="module-btn">开启面部交互</button>
+              <button id="faceStop" class="module-btn module-btn--stop" disabled>结束面部交互</button>
+            </div>
+          </div>
         </article>
 
         <article class="insight-card" id="handCard">
           <header>
             <h2>手势交互</h2>
-            <span id="handLastAction" class="badge">未激活</span>
+            <div class="header-tags">
+              <span id="handLastAction" class="badge">未激活</span>
+              <span id="handState" class="chip chip--idle">手势：未启动</span>
+            </div>
           </header>
           <div class="video-wrapper">
             <img id="handStream" class="insight-video" alt="手势摄像头画面" />
           </div>
           <p>实时映射左右手的 LED 列与手势动作，驱动 3D 控制命令。</p>
-          <div class="led-grid" id="handLedGrid" aria-label="LED 列可视化"></div>
-          <ul id="handGestureList" class="gesture-log" aria-label="最近手势"></ul>
+          <div class="module-inline" aria-label="手势交互控制">
+            <div class="module-inline__buttons">
+              <button id="handStart" class="module-btn">开启手势交互</button>
+              <button id="handStop" class="module-btn module-btn--stop" disabled>结束手势交互</button>
+            </div>
+          </div>
         </article>
 
         <article class="insight-card" id="voiceCard">
           <header>
             <h2>语音识别</h2>
-            <span id="voiceBadge" class="badge">等待</span>
+            <div class="header-tags">
+              <span id="voiceBadge" class="badge">等待</span>
+              <span id="voiceState" class="chip chip--idle">语音：未启动</span>
+            </div>
           </header>
           <p id="voiceStatus">当前状态：等待启动...</p>
           <div class="insight-row"><span>识别内容</span><strong id="voiceTranscript">--</strong></div>
           <div class="insight-row"><span>最后命令</span><strong id="voiceCommand">--</strong></div>
+          <div class="module-inline" aria-label="语音识别控制">
+            <div class="module-inline__buttons">
+              <button id="voiceStart" class="module-btn">开启语音识别</button>
+              <button id="voiceStop" class="module-btn module-btn--stop" disabled>结束语音识别</button>
+            </div>
+          </div>
         </article>
       </section>
 

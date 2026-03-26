@@ -33,6 +33,8 @@ const renderer = new THREE.WebGLRenderer({
   precision: "mediump",
 });
 renderer.setPixelRatio(1);
+// 强制将模型视图底色设为米白杏色，避免被默认清屏色覆盖
+renderer.setClearColor(0xefe0c8, 1);
 
 const scene = new THREE.Scene();
 scene.background = null;
@@ -63,13 +65,13 @@ scene.add(fallbackRoot);
 
 const platform = new THREE.Mesh(
   new THREE.CylinderGeometry(2, 2.2, 0.35, 64),
-  new THREE.MeshStandardMaterial({ color: 0x101b3a, roughness: 0.3, metalness: 0.4 })
+  new THREE.MeshStandardMaterial({ color: 0xe8d2b3, roughness: 0.78, metalness: 0.08 })
 );
 fallbackRoot.add(platform);
 
 const deck = new THREE.Mesh(
   new THREE.CylinderGeometry(1.4, 1.5, 0.12, 48),
-  new THREE.MeshStandardMaterial({ color: 0x1c315d, roughness: 0.35, metalness: 0.55 })
+  new THREE.MeshStandardMaterial({ color: 0xf2e3cc, roughness: 0.65, metalness: 0.05 })
 );
 deck.position.y = 0.235;
 fallbackRoot.add(deck);
@@ -92,7 +94,7 @@ const emitter = new THREE.Mesh(
 emitter.position.y = 0.14;
 topPivot.add(emitter);
 
-// 默认不显示内置演示模型，避免外部模型加载时出现“先闪一下试用版”
+// 默认不显示内置演示模型
 fallbackRoot.visible = false;
 
 const modelAnchor = new THREE.Group();
@@ -100,7 +102,7 @@ scene.add(modelAnchor);
 
 const floor = new THREE.Mesh(
   new THREE.CircleGeometry(4, 80),
-  new THREE.MeshBasicMaterial({ color: 0x0a152f, transparent: true, opacity: 0.8 })
+  new THREE.MeshBasicMaterial({ color: 0xead8bc, transparent: true, opacity: 0.92 })
 );
 floor.rotation.x = -Math.PI / 2;
 floor.position.y = -0.2;
@@ -253,13 +255,6 @@ const FORCE_POINTS_OVERLAY = false;
 const MODEL_CANDIDATES = [
   // 当前模型（用户指定）
   "./models/chaifen.fbx?v=20260324-chaifen-current",
-  // FBX 优先（用户指定文件）
-  "./models/ImageToStl.com_999.fbx?v=20260317-fbx-user",
-  "./models/model_999.fbx?v=20260317-fbx",
-  // GLB 备用
-  "./models/model_999.glb?v=20260316-model999b",
-  "./models/ImageToStl.com_999.glb?v=20260316-model999",
-  "./models/dripmotion.glb?v=20260316-named4",
 ];
 const MODEL_TARGET_NAMES = new Set(["toppart", "top_part", "top-part", "top", "ringa", "ringb", "ringc", "ringd"]);
 const RING_MODULE_NAMES = ["RingA", "RingB", "RingC", "RingD"];
@@ -802,6 +797,21 @@ function detectRingLayer(node) {
   return null;
 }
 
+function detectModelPartBucket(node) {
+  let current = node;
+  while (current) {
+    const n = String(current.name || "").toLowerCase();
+    if (n.includes("ringa")) return "ringA";
+    if (n.includes("ringb")) return "ringB";
+    if (n.includes("ringc")) return "ringC";
+    if (n.includes("ringd")) return "ringD";
+    if (n.includes("flower")) return "flower";
+    if (n.includes("component")) return "component";
+    current = current.parent;
+  }
+  return null;
+}
+
 function applyLayeredRingBronze(root) {
   const palette = {
     innerA: {
@@ -828,14 +838,51 @@ function applyLayeredRingBronze(root) {
       roughness: 0.44,
       metalness: 0.78,
     },
+    ringA: {
+      color: new THREE.Color(0x6c4a2f),
+      emissive: new THREE.Color(0x1c120b),
+      roughness: 0.66,
+      metalness: 0.58,
+    },
+    ringB: {
+      color: new THREE.Color(0x855636),
+      emissive: new THREE.Color(0x24160d),
+      roughness: 0.58,
+      metalness: 0.64,
+    },
+    ringC: {
+      color: new THREE.Color(0xa06943),
+      emissive: new THREE.Color(0x2a190f),
+      roughness: 0.5,
+      metalness: 0.7,
+    },
+    ringD: {
+      color: new THREE.Color(0xbd8354),
+      emissive: new THREE.Color(0x311f13),
+      roughness: 0.45,
+      metalness: 0.76,
+    },
+    flower: {
+      color: new THREE.Color(0xd8b47f),
+      emissive: new THREE.Color(0x2a2014),
+      roughness: 0.55,
+      metalness: 0.24,
+    },
+    component: {
+      color: new THREE.Color(0xebe0cf),
+      emissive: new THREE.Color(0x1a1610),
+      roughness: 0.72,
+      metalness: 0.06,
+    },
   };
 
   root.traverse((node) => {
     if (!node?.isMesh) return;
+    const bucketByName = detectModelPartBucket(node);
     const layer = detectRingLayer(node);
-    if (!layer) return;
+    const spec = palette[bucketByName] || palette[layer];
+    if (!spec) return;
 
-    const spec = palette[layer];
     const mats = Array.isArray(node.material) ? node.material : [node.material];
     const upgraded = mats.map((mat) => {
       if (!mat) return mat;
@@ -1202,7 +1249,7 @@ function bindPartDebugUI() {
 }
 
 async function loadExternalModel() {
-  // 加载外部模型期间保持内置模型隐藏，避免先闪出试用模型
+  // 不显示内置模拟模型，只加载真实模型
   setFallbackVisible(false);
 
   let lastError = null;
@@ -1211,19 +1258,7 @@ async function loadExternalModel() {
     const fileName = getDisplayFileName(modelUrl);
     const isFBX = /\.fbx(\?|$)/i.test(modelUrl);
 
-    // 先用 HEAD 检查文件是否存在，避免为缺失文件报错
-    if (isFBX) {
-      try {
-        const probe = await fetch(modelUrl, { method: "HEAD" });
-        if (!probe.ok) {
-          console.log(`[DripMotion] FBX 候选文件不存在 (${probe.status})，跳过：${fileName}`);
-          continue;
-        }
-      } catch {
-        console.log(`[DripMotion] FBX 候选文件无法访问，跳过：${fileName}`);
-        continue;
-      }
-    }
+    // 不做 HEAD 预探测，直接加载以减少等待时间
 
     updateModelStatus(`3D 模型：正在加载 ${fileName} …`, "warn");
     try {
@@ -1252,6 +1287,18 @@ async function loadExternalModel() {
       const needsFlipX = !isFBX || /imagetostl\.com_999\.fbx|chaifen\.fbx/i.test(fileName);
       normalizeLoadedModel(modelRoot, needsFlipX);
 
+      // 先把模型挂到场景并显示一帧，减少“加载完成后还要等待处理”的体感延迟
+      modelAnchor.clear();
+      modelAnchor.add(modelRoot);
+      lastLoadedModelRoot = modelRoot;
+      setFallbackVisible(false);
+      modelBoundsHelper.visible = false;
+      focusCameraOnObject(modelRoot);
+      updateModelStatus(`3D 模型：已加载 ${fileName}，正在初始化材质与控制…`, "warn");
+
+      // 让浏览器先渲染出模型，再做后处理（材质、绑定、调试）
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+
       if (isFBX) {
         // FBX 材质转换为 MeshStandardMaterial，修复白色显示问题
         convertFBXMaterials(modelRoot);
@@ -1276,14 +1323,6 @@ async function loadExternalModel() {
       if (FORCE_POINTS_OVERLAY) {
         addPointsOverlay(modelRoot);
       }
-
-      modelAnchor.clear();
-      modelAnchor.add(modelRoot);
-      lastLoadedModelRoot = modelRoot;
-      setFallbackVisible(false);
-      modelBoundsHelper.visible = false;
-
-      focusCameraOnObject(modelRoot);
 
       // 首先尝试绑定独立的 4 个环（A/B/C/D）
       const ringBindingSuccess = bindPerRingMotionTargets(modelRoot);
@@ -1324,14 +1363,13 @@ async function loadExternalModel() {
     }
   }
 
-  console.error("[DripMotion] 外部 3D 模型加载失败，回退到内置演示模型", lastError);
+  console.error("[DripMotion] 外部 3D 模型加载失败", lastError);
   modelAnchor.clear();
-  setFallbackVisible(true);
+  setFallbackVisible(false);
   modelBoundsHelper.visible = false;
-  bindMotionTargets(topPivot, topPivot, "fallback");
   clearFlowerRig();
   lastLoadedModelRoot = null;
-  updateModelStatus("3D 模型：候选文件均加载失败，当前使用内置演示模型", "warn");
+  updateModelStatus("3D 模型：chaifen.fbx 加载失败，请检查文件或网络", "error");
 }
 
 function updateStatus(text) {
@@ -1439,12 +1477,12 @@ function applyCommand(action) {
     case "stop":
       stopMotion();
       break;
-    case "flowerOpen":
-      setFlowerTarget(1, "中间花朵 - 打开中");
-      break;
-    case "flowerClose":
-      setFlowerTarget(0, "中间花朵 - 闭合中");
-      break;
+    // case "flowerOpen":
+    //   setFlowerTarget(1, "中间花朵 - 打开中");
+    //   break;
+    // case "flowerClose":
+    //   setFlowerTarget(0, "中间花朵 - 闭合中");
+    //   break;
     default:
       break;
   }
@@ -1530,7 +1568,6 @@ function renderLoop() {
   stepPhysics(delta);
   controls.update();
   renderer.render(scene, camera);
-  updateStatus(statusText.textContent || "上表面部件 - 就绪");
 }
 
 renderLoop();
@@ -1610,9 +1647,13 @@ let activeBridgeHost = window.location.hostname || "127.0.0.1";
 const BRIDGE_PORT = 5051;
 const QUERY = new URLSearchParams(window.location.search);
 const ENABLE_BRIDGE = QUERY.get("standalone") !== "1" && QUERY.get("bridge") !== "off";
+const ENABLE_VOICE_AI = QUERY.get("voiceai") !== "off";
 const AUTO_START_ON_PAGE_OPEN = false;
 const DEFAULT_MODULE_ON_OPEN = "face";
 let bridgeBootstrapDone = false;
+let lastVoiceAiTranscript = "";
+let voiceAiRequestBusy = false;
+let voiceAiRunToken = 0;
 
 function setBridgeButtonsEnabled(enabled) {
   [faceStartBtn, faceStopBtn, handStartBtn, handStopBtn, voiceStartBtn, voiceStopBtn].forEach((btn) => {
@@ -1761,7 +1802,11 @@ function handleBridgeEvent(message) {
   }
 
   if (message.channel === "voice") {
-    if (message.type === "status") updateVoiceCard(message.payload || {});
+    if (message.type === "status") {
+      const payload = message.payload || {};
+      updateVoiceCard(payload);
+      maybeRunVoiceAi(payload);
+    }
     if (message.type === "command") {
       if (voiceBindings.command && message.payload?.command) {
         voiceBindings.command.textContent = message.payload.command;
@@ -1831,6 +1876,95 @@ function getControlUrl(path) {
   return `${protocol}//${activeBridgeHost}:${BRIDGE_PORT}${path}`;
 }
 
+function sleepMs(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function shouldRunVoiceAi(payload) {
+  if (!ENABLE_VOICE_AI || !payload) return false;
+  if (!payload.available) return false;
+  const transcript = String(payload.transcript || "").trim();
+  if (transcript.length < 4) return false;
+  if (transcript === lastVoiceAiTranscript) return false;
+  if (/等待唤醒|唤醒词/i.test(payload.status_text || "")) return false;
+  return true;
+}
+
+async function requestVoiceAiPlan(transcript) {
+  const response = await fetch(getControlUrl("/api/ai/voice-plan"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: transcript }),
+  });
+  const json = await response.json();
+  if (!response.ok || json.status !== "ok" || !json.plan) {
+    throw new Error("voice_ai_plan_failed");
+  }
+  return json;
+}
+
+async function executeVoiceMotionPlan(result, transcript) {
+  const token = ++voiceAiRunToken;
+  const plan = result?.plan || {};
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  if (!steps.length) return;
+
+  if (voiceBindings.badge) {
+    voiceBindings.badge.textContent = result.engine === "llm" ? "AI编排中" : "规则编排中";
+    voiceBindings.badge.classList.add("alert");
+  }
+  if (voiceBindings.command) {
+    voiceBindings.command.textContent = plan.summary || "已生成动作序列";
+  }
+
+  updateStatus(`语音AI执行：${transcript.slice(0, 16)}${transcript.length > 16 ? "..." : ""}`);
+
+  for (const step of steps) {
+    if (token !== voiceAiRunToken) return;
+    const ring = typeof step.ring === "string" ? step.ring : null;
+    const action = typeof step.action === "string" ? step.action : "stop";
+    const durationMs = Number.isFinite(step.durationMs) ? Math.max(200, Number(step.durationMs)) : 900;
+
+    if (ring && ["A", "B", "C", "D"].includes(ring)) {
+      applyRingCommand(ring, action);
+      await sleepMs(durationMs);
+      if (token !== voiceAiRunToken) return;
+      if (action !== "stop") stopRingMotion(ring, `Ring${ring} - 停止`);
+      continue;
+    }
+
+    applyCommand(action);
+    await sleepMs(durationMs);
+    if (token !== voiceAiRunToken) return;
+    if (action !== "stop") applyCommand("stop");
+  }
+
+  if (voiceBindings.badge) {
+    voiceBindings.badge.textContent = "监听中";
+    voiceBindings.badge.classList.remove("alert");
+  }
+}
+
+async function maybeRunVoiceAi(payload) {
+  if (!shouldRunVoiceAi(payload) || voiceAiRequestBusy) return;
+  const transcript = String(payload.transcript || "").trim();
+  voiceAiRequestBusy = true;
+  lastVoiceAiTranscript = transcript;
+
+  try {
+    const result = await requestVoiceAiPlan(transcript);
+    await executeVoiceMotionPlan(result, transcript);
+  } catch (err) {
+    console.warn("语音 AI 编排失败，已跳过", err);
+    if (voiceBindings.badge) {
+      voiceBindings.badge.textContent = "AI失败";
+      voiceBindings.badge.classList.add("alert");
+    }
+  } finally {
+    voiceAiRequestBusy = false;
+  }
+}
+
 async function refreshModuleStatus() {
   try {
     const response = await fetch(getControlUrl("/api/control/status"));
@@ -1852,13 +1986,13 @@ function updateFaceCard(payload) {
   if (payload.status_text) {
     faceBindings.status.textContent = `当前状态：${payload.status_text}`;
   }
-  if (payload.direction) {
+  if (payload.direction && faceBindings.direction) {
     faceBindings.direction.textContent = payload.direction.replace("LOOK_", "");
   }
-  if (payload.eye) faceBindings.eye.textContent = payload.eye;
-  if (payload.mouth) faceBindings.mouth.textContent = payload.mouth;
-  if (payload.serial_status) faceBindings.serial.textContent = payload.serial_status;
-  if (payload.last_command) faceBindings.cmd.textContent = payload.last_command;
+  if (payload.eye && faceBindings.eye) faceBindings.eye.textContent = payload.eye;
+  if (payload.mouth && faceBindings.mouth) faceBindings.mouth.textContent = payload.mouth;
+  if (payload.serial_status && faceBindings.serial) faceBindings.serial.textContent = payload.serial_status;
+  if (payload.last_command && faceBindings.cmd) faceBindings.cmd.textContent = payload.last_command;
   if (faceBindings.mode) {
     faceBindings.mode.textContent = payload.calibrated ? "已校准" : "校准中";
     faceBindings.mode.classList.toggle("alert", !payload.calibrated);
@@ -1890,7 +2024,6 @@ function updateVoiceCard(payload) {
 }
 
 function updateHandCard(payload) {
-  if (payload.left || payload.right) renderLedColumns(payload);
   if (Array.isArray(payload.gestures) && handBindings.gestures) {
     const lines = payload.gestures.slice(-4);
     handBindings.gestures.innerHTML = "";

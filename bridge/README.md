@@ -11,6 +11,21 @@ the browser control panel.
 | `server.py` | FastAPI app exposing `POST /api/events` and a WebSocket endpoint `/ws`. Every HTTP event is broadcast to all WebSocket subscribers. |
 | `event_client.py` | Zero-dependency helper that queues events and posts them to the server from a background thread. |
 
+## AI voice planning
+
+`server.py` now exposes `POST /api/ai/voice-plan` for converting a Chinese voice transcript
+to a normalized motion plan (`RingA~D + action + durationMs`).
+
+- With `DRIP_AI_API_KEY` configured, it calls an OpenAI-compatible Chat Completions endpoint.
+- Without key, it falls back to a built-in rule planner so the pipeline still works offline.
+
+Environment variables:
+
+- `DRIP_AI_API_KEY`: API key for LLM planning (optional).
+- `DRIP_AI_MODEL`: chat model name (default `gpt-4o-mini`).
+- `DRIP_AI_BASE_URL`: chat completions endpoint (default `https://api.openai.com/v1/chat/completions`).
+- `DRIP_AI_TIMEOUT_SEC`: HTTP timeout in seconds (default `10`).
+
 ## Quick start
 
 ```bash

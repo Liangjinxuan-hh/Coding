@@ -86,6 +86,24 @@ PINKY_FINGER_TIP = 20
 WRIST = 0
 
 
+def open_camera(index=0):
+    # Windows 下优先使用 DirectShow，可显著缩短摄像头启动等待
+    if os.name == "nt":
+        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(index)
+    else:
+        cap = cv2.VideoCapture(index)
+
+    if cap and cap.isOpened():
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 30)
+        if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return cap
+
+
 # --- 手势判断函数 ---
 def is_finger_extended(landmarks, tip_idx, pip_idx):
     # 通过比较指尖和指关节的距离来判断手指是否伸直
@@ -126,7 +144,7 @@ def is_victory_sign(landmarks):
 def main():
     global detection_results
 
-    cap = cv2.VideoCapture(0)
+    cap = open_camera(0)
     if not cap.isOpened():
         print("无法打开摄像头")
         return
