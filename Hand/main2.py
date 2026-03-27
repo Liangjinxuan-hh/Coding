@@ -65,9 +65,11 @@ LED_COLORS = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (255, 255, 0), (0, 255, 255
 # --- 3. 手势识别状态变量 ---
 hand_data = {
     'Left': {'last_wrist_y': None, 'last_wrist_x': None, 'last_detection_time': time.time(),
-             'last_open_time': 0, 'last_closed_time': 0, 'last_v_sign_time': 0, 'last_motion_emit': 0},
+             'last_open_time': 0, 'last_closed_time': 0, 'last_v_sign_time': 0, 'last_motion_emit': 0,
+             'last_ring_select_time': 0, 'active_ring': 'A'},
     'Right': {'last_wrist_y': None, 'last_wrist_x': None, 'last_detection_time': time.time(),
-              'last_open_time': 0, 'last_closed_time': 0, 'last_v_sign_time': 0, 'last_motion_emit': 0}
+              'last_open_time': 0, 'last_closed_time': 0, 'last_v_sign_time': 0, 'last_motion_emit': 0,
+              'last_ring_select_time': 0, 'active_ring': 'B'}
 }
 
 BRIGHTNESS_SENSITIVITY = 0.8
@@ -77,6 +79,7 @@ SWIPE_SPEED_THRESHOLD = 150
 VERTICAL_SPEED_THRESHOLD = 50
 DEBOUNCE_TIME = 0.5
 HAND_COMMAND_COOLDOWN = 0.4
+RING_SELECT_COOLDOWN = 0.5
 
 THUMB_TIP = 4
 INDEX_FINGER_TIP = 8
@@ -84,6 +87,13 @@ MIDDLE_FINGER_TIP = 12
 RING_FINGER_TIP = 16
 PINKY_FINGER_TIP = 20
 WRIST = 0
+THUMB_IP = 3
+THUMB_MCP = 2
+INDEX_FINGER_PIP = 6
+MIDDLE_FINGER_PIP = 10
+RING_FINGER_PIP = 14
+PINKY_FINGER_PIP = 18
+INDEX_FINGER_MCP = 5
 
 
 def open_camera(index=0):
@@ -140,6 +150,86 @@ def is_victory_sign(landmarks):
     return index_extended and middle_extended and ring_bent and pinky_bent
 
 
+def distance_2d(p1, p2):
+    return float(np.linalg.norm(np.array([p1.x, p1.y]) - np.array([p2.x, p2.y])))
+
+
+def detect_ring_gesture(landmarks):
+    thumb_tip = landmarks[THUMB_TIP]
+    thumb_ip = landmarks[THUMB_IP]
+    thumb_mcp = landmarks[THUMB_MCP]
+    wrist = landmarks[WRIST]
+    index_tip = landmarks[INDEX_FINGER_TIP]
+    index_mcp = landmarks[INDEX_FINGER_MCP]
+
+    index_extended = is_finger_extended(landmarks, INDEX_FINGER_TIP, INDEX_FINGER_PIP)
+    middle_extended = is_finger_extended(landmarks, MIDDLE_FINGER_TIP, MIDDLE_FINGER_PIP)
+    ring_extended = is_finger_extended(landmarks, RING_FINGER_TIP, RING_FINGER_PIP)
+    pinky_extended = is_finger_extended(landmarks, PINKY_FINGER_TIP, PINKY_FINGER_PIP)
+
+    other_four_extended = index_extended and middle_extended and ring_extended and pinky_extended
+    other_four_bent = (not index_extended) and (not middle_extended) and (not ring_extended) and (not pinky_extended)
+
+    palm_scale = max(distance_2d(index_mcp, wrist), 1e-4)
+    thumb_length_ratio = distance_2d(thumb_tip, thumb_mcp) / palm_scale
+    thumb_index_ratio = distance_2d(thumb_tip, index_tip) / palm_scale
+
+    thumb_extended = thumb_length_ratio > 0.40 and thumb_index_ratio > 0.42
+    thumb_bent = thumb_length_ratio < 0.36 or thumb_index_ratio < 0.34
+
+    if thumb_extended and other_four_bent:
+        return "A"
+    if thumb_bent and other_four_extended:
+        return "B"
+
+    if other_four_bent:
+        avg_tip_wrist = (
+            distance_2d(landmarks[INDEX_FINGER_TIP], wrist)
+            + distance_2d(landmarks[MIDDLE_FINGER_TIP], wrist)
+            + distance_2d(landmarks[RING_FINGER_TIP], wrist)
+            + distance_2d(landmarks[PINKY_FINGER_TIP], wrist)
+        ) / (4.0 * palm_scale)
+
+        # C: 五指弯曲形成圆弧，虎口/拇指与食指之间留有开口。
+        if 0.52 <= avg_tip_wrist <= 0.95 and thumb_index_ratio >= 0.35:
+            return "C"
+        # D: 全部紧握成拳，指尖整体更靠近手腕。
+        if avg_tip_wrist < 0.58 and thumb_index_ratio < 0.34:
+            return "D"
+
+    return None
+
+
+def detect_stop_gesture(landmarks):
+    """检测停止手势：两个食指竖起并交叉相触"""
+    try:
+        # 获取两只手的食指尖端
+        # 左手食指尖端：INDEX_FINGER_TIP 在管道中对应索引 8
+        # 右手食指尖端：通常通过两只手的分开检测，这里假设在单只手的识别中
+        # 由于 MediaPipe HandLandmarker 每次处理一只手，我们需要在上一级调用时对两只手都检测
+
+        # 食指和中指需要都竖起
+        index_extended = is_finger_extended(landmarks, INDEX_FINGER_TIP, INDEX_FINGER_PIP)
+        middle_extended = is_finger_extended(landmarks, MIDDLE_FINGER_TIP, MIDDLE_FINGER_PIP)
+
+        # 其他三指需要弯曲
+        ring_bent = not is_finger_extended(landmarks, RING_FINGER_TIP, RING_FINGER_PIP)
+        pinky_bent = not is_finger_extended(landmarks, PINKY_FINGER_TIP, PINKY_FINGER_PIP)
+        thumb_bent = landmarks[THUMB_TIP].y > landmarks[THUMB_IP].y
+
+        # 食指和中指之间的距离应该很近（交叉触碰）
+        index_tip = np.array([landmarks[INDEX_FINGER_TIP].x, landmarks[INDEX_FINGER_TIP].y])
+        middle_tip = np.array([landmarks[MIDDLE_FINGER_TIP].x, landmarks[MIDDLE_FINGER_TIP].y])
+        finger_distance = np.linalg.norm(index_tip - middle_tip)
+
+        # 当两个食指都竖起、其他手指弯曲、且食指相距很近时，判定为停止手势
+        if index_extended and middle_extended and ring_bent and pinky_bent and thumb_bent and finger_distance < 0.05:
+            return True
+        return False
+    except (IndexError, TypeError):
+        return False
+
+
 # --- 4. 主循环 ---
 def main():
     global detection_results
@@ -193,8 +283,11 @@ def main():
                     current_wrist_x = wrist_landmark.x * W
                     time_diff = current_loop_time - current_hand_history['last_detection_time']
                     wrist_speed_y = 0
+                    wrist_speed_x = 0
                     if current_hand_history['last_wrist_y'] is not None and time_diff > 0:
                         wrist_speed_y = (current_wrist_y - current_hand_history['last_wrist_y']) / time_diff
+                    if current_hand_history['last_wrist_x'] is not None and time_diff > 0:
+                        wrist_speed_x = (current_wrist_x - current_hand_history['last_wrist_x']) / time_diff
 
                     # --- 新的LED控制逻辑 ---
                     target_led_column = led_column_left if hand_label == 'Left' else led_column_right
@@ -212,6 +305,16 @@ def main():
                         # 2. 控制选中的LED
                         selected_led = target_led_column.leds[selected_led_index]
 
+                        ring_letter = detect_ring_gesture(hand_landmarks)
+                        if ring_letter and current_loop_time - current_hand_history['last_ring_select_time'] > RING_SELECT_COOLDOWN:
+                            current_hand_history['active_ring'] = ring_letter
+                            current_hand_history['last_ring_select_time'] = current_loop_time
+                            gesture_display_info.append(f"  -> Ring {ring_letter} Selected")
+                            publish_hand_command("selectRing", {"hand": hand_label, "ring": ring_letter})
+
+                        active_ring = current_hand_history.get('active_ring') or ('A' if hand_label == 'Left' else 'B')
+                        gesture_display_info.append(f"  -> Active Ring: {active_ring}")
+
                         # 亮度控制
                         if abs(wrist_speed_y) > VERTICAL_SPEED_THRESHOLD:
                             change = abs(wrist_speed_y) * BRIGHTNESS_SENSITIVITY * time_diff
@@ -223,39 +326,42 @@ def main():
 
                             if current_loop_time - current_hand_history['last_motion_emit'] > HAND_COMMAND_COOLDOWN:
                                 action = "moveUp" if wrist_speed_y < 0 else "moveDown"
-                                publish_hand_command(action, {"hand": hand_label, "speed": abs(wrist_speed_y)})
+                                publish_hand_command(
+                                    action,
+                                    {
+                                        "hand": hand_label,
+                                        "ring": active_ring,
+                                        "speed": abs(wrist_speed_y),
+                                        "axis": "y",
+                                    },
+                                )
                                 current_hand_history['last_motion_emit'] = current_loop_time
 
-                        # 颜色切换 (张开手)
-                        if is_hand_open(hand_landmarks) and current_loop_time - current_hand_history[
-                            'last_open_time'] > DEBOUNCE_TIME:
+                        if abs(wrist_speed_x) > SWIPE_SPEED_THRESHOLD and (
+                                current_loop_time - current_hand_history['last_motion_emit'] > HAND_COMMAND_COOLDOWN):
                             selected_led['color_idx'] = (selected_led['color_idx'] + 1) % len(LED_COLORS)
-                            current_hand_history['last_open_time'] = current_loop_time
-                            gesture_display_info.append(f"  -> CLR Change")
-                            publish_hand_command("rotateLeft", {"hand": hand_label})
+                            action = "rotateLeft" if wrist_speed_x < 0 else "rotateRight"
+                            gesture_display_info.append(f"  -> {action} @ Ring {active_ring}")
+                            publish_hand_command(
+                                action,
+                                {
+                                    "hand": hand_label,
+                                    "ring": active_ring,
+                                    "speed": abs(wrist_speed_x),
+                                    "axis": "x",
+                                },
+                            )
+                            current_hand_history['last_motion_emit'] = current_loop_time
 
-                        # 开关 (握拳)
-                        if is_hand_closed(hand_landmarks) and current_loop_time - current_hand_history[
-                            'last_closed_time'] > DEBOUNCE_TIME:
-                            selected_led['is_on'] = not selected_led['is_on']
+                        # 食指交叉手势作为紧急停止当前 ring
+                        if detect_stop_gesture(hand_landmarks) and current_loop_time - current_hand_history['last_closed_time'] > DEBOUNCE_TIME:
                             current_hand_history['last_closed_time'] = current_loop_time
-                            gesture_display_info.append(f"  -> Toggle ON/OFF")
-                            publish_hand_command("rotateRight", {"hand": hand_label})
-
-                        # 全体点亮 (V字手势)
-                        if is_victory_sign(hand_landmarks) and current_loop_time - current_hand_history[
-                            'last_v_sign_time'] > DEBOUNCE_TIME:
-                            current_color_idx = selected_led['color_idx']
-                            for led in target_led_column.leds:
-                                led['is_on'] = True
-                                led['brightness'] = 255
-                                led['color_idx'] = current_color_idx
-                            current_hand_history['last_v_sign_time'] = current_loop_time
-                            gesture_display_info.append(f"  -> V-Sign: Fill All!")
-                            publish_hand_command("stop", {"hand": hand_label})
+                            gesture_display_info.append(f"  -> Stop Ring {active_ring}")
+                            publish_hand_command("stop", {"hand": hand_label, "ring": active_ring})
 
                     # 更新历史数据
                     current_hand_history['last_wrist_y'] = current_wrist_y
+                    current_hand_history['last_wrist_x'] = current_wrist_x
                     current_hand_history['last_detection_time'] = current_loop_time
 
             # --- 5. 模拟 LED 显示 (修改) ---

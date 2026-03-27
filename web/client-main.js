@@ -1588,12 +1588,23 @@ buttons.forEach((btn) => {
 const FACE_COMMAND_MAP = {
   LOOK_LEFT: "rotateLeft",
   LOOK_RIGHT: "rotateRight",
+  LOOK_UP: "moveUp",
+  LOOK_DOWN: "moveDown",
   DEFAULT: "stop",
   CLOSE_EYES: "moveDown",
   OPEN_EYES: "moveUp",
   OPEN_MOUTH: "moveUp",
   CLOSE_MOUTH: "stop",
 };
+
+const FACE_RING_COMMANDS = {
+  SELECT_RING_A: "A",
+  SELECT_RING_B: "B",
+  SELECT_RING_C: "C",
+  SELECT_RING_D: "D",
+};
+
+let activeFaceRing = null;
 
 const HAND_COMMAND_MAP = {
   moveUp: "moveUp",
@@ -1775,11 +1786,29 @@ function handleBridgeEvent(message) {
       faceBindings.stream.src = `data:image/jpeg;base64,${message.payload.data}`;
     }
     if (message.type === "command") {
+      const ringFromFace = FACE_RING_COMMANDS[message.payload?.command];
+      if (ringFromFace) {
+        activeFaceRing = ringFromFace;
+        if (faceBindings.cmd) {
+          faceBindings.cmd.textContent = `SELECT_RING_${ringFromFace}`;
+        }
+        if (faceBindings.badge) {
+          faceBindings.badge.textContent = `面部选环 → Ring${ringFromFace}`;
+        }
+        return;
+      }
+
       const next = FACE_COMMAND_MAP[message.payload?.command];
       if (faceBindings.cmd && message.payload?.command) {
         faceBindings.cmd.textContent = message.payload.command;
       }
-      if (next) relayExternalCommand("face", next, message.payload);
+      if (next) {
+        if (activeFaceRing && ["A", "B", "C", "D"].includes(activeFaceRing)) {
+          applyRingCommand(activeFaceRing, next);
+        } else {
+          relayExternalCommand("face", next, message.payload);
+        }
+      }
     }
     return;
   }
@@ -1790,12 +1819,25 @@ function handleBridgeEvent(message) {
       handBindings.stream.src = `data:image/jpeg;base64,${message.payload.data}`;
     }
     if (message.type === "command") {
+      const ring = message.payload?.ring || message.payload?.meta?.ring;
+      if (message.payload?.action === "selectRing") {
+        if (handBindings.badge) {
+          handBindings.badge.textContent = ring ? `手势选环 → Ring${ring}` : "手势选环";
+        }
+        return;
+      }
       const next = HAND_COMMAND_MAP[message.payload?.action];
       if (next) {
         if (handBindings.badge) {
-          handBindings.badge.textContent = `手势 → ${message.payload?.action}`;
+          handBindings.badge.textContent = ring
+            ? `手势 → Ring${ring}:${message.payload?.action}`
+            : `手势 → ${message.payload?.action}`;
         }
-        relayExternalCommand("hand", next, message.payload);
+        if (ring && ["A", "B", "C", "D"].includes(ring)) {
+          applyRingCommand(ring, next);
+        } else {
+          relayExternalCommand("hand", next, message.payload);
+        }
       }
     }
     return;

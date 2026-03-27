@@ -37,7 +37,12 @@ def publish_hand_snapshot(payload: Dict[str, Any], throttle: float = 0.15) -> No
 def publish_hand_command(action: str, meta: Dict[str, Any] | None = None) -> None:
     if not hand_client:
         return
-    hand_client.publish("command", {"action": action, "meta": meta or {}})
+    normalized_meta = meta or {}
+    payload = {"action": action, "meta": normalized_meta}
+    ring = normalized_meta.get("ring")
+    if isinstance(ring, str) and ring in {"A", "B", "C", "D"}:
+        payload["ring"] = ring
+    hand_client.publish("command", payload)
 
 
 def publish_hand_frame(jpeg_base64: str) -> None:

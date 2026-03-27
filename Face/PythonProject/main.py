@@ -12,7 +12,7 @@ import base64
 import config as app_config
 from config import CONFIG, load_config, LEFT_EYE_EAR_POINTS, RIGHT_EYE_EAR_POINTS, LAST_COMMAND_SENT
 from serial_comms import initialize_serial, send_command, receive_data
-from face_analysis import eye_aspect_ratio, mouth_aspect_ratio, detect_face_direction
+from face_analysis import eye_aspect_ratio, mouth_aspect_ratio, detect_face_direction, detect_head_tilt, detect_eye_pattern
 from ui_utils import show_settings_window, get_chinese_font, draw_text
 from ui_manager import Button
 from web_bridge import publish_face_snapshot, publish_face_frame
@@ -155,6 +155,8 @@ def main(tk_root):
     last_eye_state = "睁眼"
     last_mouth_state = "闭嘴"
     last_direction = "LOOK_CENTER"
+    last_tilt = "LOOK_STRAIGHT"
+    last_eye_pattern = None
     last_state_change_time = time.time()
     state_change_cooldown = 0.5  # 状态改变冷却时间（秒）
 
@@ -218,6 +220,8 @@ def main(tk_root):
 
         landmarks = None
         direction = "LOOK_CENTER"
+        tilt = "LOOK_STRAIGHT"
+        eye_pattern = None
         current_eye_state = last_eye_state
         current_mouth_state = last_mouth_state
         has_face = bool(task_face_landmarks) if use_tasks_api else bool(results and results.multi_face_landmarks)
@@ -267,6 +271,8 @@ def main(tk_root):
             else:
                 current_eye_state = "睁眼"
 
+            eye_pattern = detect_eye_pattern(left_ear, right_ear, dynamic_eye_threshold)
+
             # 嘴巴状态
             mouth_dist_ref = [0]
             mouth_ratio_ref = [0]
@@ -278,6 +284,8 @@ def main(tk_root):
 
             # 头部方向
             direction = detect_face_direction(landmarks)
+            # 头部竖直倾斜
+            tilt = detect_head_tilt(landmarks)
 
             # 状态变化检测与命令发送
             current_time = time.time()
@@ -285,7 +293,11 @@ def main(tk_root):
             if current_time - last_state_change_time > state_change_cooldown:
                 command = None
 
-                if current_eye_state != last_eye_state:
+                if eye_pattern and eye_pattern != last_eye_pattern:
+                    command = f"SELECT_RING_{eye_pattern}"
+                    last_eye_pattern = eye_pattern
+
+                elif current_eye_state != last_eye_state:
                     command = "CLOSE_EYES" if current_eye_state == "闭眼" else "OPEN_EYES"
                     last_eye_state = current_eye_state
 
@@ -302,11 +314,24 @@ def main(tk_root):
                         command = "DEFAULT"
                     last_direction = direction
 
+                elif tilt != last_tilt:
+                    if tilt == "LOOK_UP":
+                        command = "LOOK_UP"
+                    elif tilt == "LOOK_DOWN":
+                        command = "LOOK_DOWN"
+                    else:
+                        command = "DEFAULT"
+                    last_tilt = tilt
+
                 if command:
                     send_command(command, None, face_command_status, event_channel="face")
                     last_state_change_time = current_time
 
-            current_face_status = f"头:{direction.replace('LOOK_', '')} | 眼:{current_eye_state} | 嘴:{current_mouth_state}"
+            tilt_label = tilt.replace('LOOK_', '')
+            current_face_status = (
+                f"头:{direction.replace('LOOK_', '')}/{tilt_label} | "
+                f"眼:{current_eye_state}({eye_pattern or '-'}) | 嘴:{current_mouth_state}"
+            )
 
         else:
             current_face_status = "未检测到人脸"
@@ -314,6 +339,9 @@ def main(tk_root):
             last_eye_state = "睁眼"
             last_mouth_state = "闭嘴"
             last_direction = "LOOK_CENTER"
+            last_tilt = "LOOK_STRAIGHT"
+            last_eye_pattern = None
+            tilt = "LOOK_STRAIGHT"
 
             # 人脸消失时清空历史 EAR
             if calibrated:
@@ -325,6 +353,8 @@ def main(tk_root):
             "eye": current_eye_state,
             "mouth": current_mouth_state,
             "direction": direction,
+            "tilt": tilt,
+            "eye_pattern": eye_pattern,
             "calibrated": calibrated,
             "serial_status": app_config.serial_status,
             "last_command": LAST_COMMAND_SENT[0],

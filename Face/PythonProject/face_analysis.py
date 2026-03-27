@@ -93,3 +93,69 @@ def detect_face_direction(landmarks):
             return "LOOK_FORWARD"
     except (IndexError, TypeError):
         return "LOOK_FORWARD"
+
+
+def detect_head_tilt(landmarks):
+    """根据关键点判断头部竖直倾斜方向（抬头/低头）"""
+    try:
+        # 关键点标记点：眼睛、鼻尖、下颌
+        # 10: 额头中心
+        # 4: 鼻尖
+        # 152: 下颌中心
+        forehead = landmarks[10]
+        nose_tip = landmarks[4]
+        chin = landmarks[152]
+
+        # 比较鼻尖和头顶、下颌之间的纵向位置
+        # 纵向距离：眼睛（33/263的中点）和下颌之间的距离
+        left_eye = landmarks[33]
+        right_eye = landmarks[263]
+        eye_center_y = (left_eye.y + right_eye.y) / 2
+
+        # 计算鼻尖相对于眼睛的纵向位置（数值越大表示越靠下）
+        nose_to_eye = nose_tip.y - eye_center_y
+        # 计算下颌相对于眼睛的纵向位置
+        chin_to_eye = chin.y - eye_center_y
+
+        # 如果鼻子偏离眼睛太多，可能是低头状态
+        # 如果下颌偏离眼睛较多，可能是抬头状态
+        tilt_ratio = chin_to_eye - nose_to_eye
+
+        # 根据下颌和鼻尖的纵向关系判断
+        # 正常姿态：chin.y > nose.y （下颌在鼻尖下面）
+        # 抬头：chin.y 和 nose.y 的距离变小，下颌相对上移
+        # 低头：chin.y 和 nose.y 的距离变大，下颌相对下移
+
+        nose_chin_distance = chin.y - nose_tip.y
+
+        # 基于鼻下颌之间的距离和角度来判断
+        # 当低头时，鼻和下颌之间的距离会增大
+        # 当抬头时，鼻和下颌之间的距离会减小
+        if nose_chin_distance > 0.15:  # 低头时下颌离鼻较远
+            return "LOOK_DOWN"
+        elif nose_chin_distance < 0.08:  # 抬头时下颌离鼻较近
+            return "LOOK_UP"
+        else:
+            return "LOOK_STRAIGHT"
+    except (IndexError, TypeError):
+        return "LOOK_STRAIGHT"
+
+
+def detect_eye_pattern(left_ear, right_ear, threshold):
+    """左右眼独立开合组合映射为 A/B/C/D。
+
+    A: 左睁右闭
+    B: 左闭右睁
+    C: 双眼睁
+    D: 双眼闭
+    """
+    left_open = left_ear >= threshold
+    right_open = right_ear >= threshold
+
+    if left_open and not right_open:
+        return "A"
+    if (not left_open) and right_open:
+        return "B"
+    if left_open and right_open:
+        return "C"
+    return "D"
