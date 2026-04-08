@@ -409,7 +409,7 @@ body::after {
   font-size: 0.74rem;
   border-radius: 999px;
   letter-spacing: 0.04em;
-  align-self: flex-start;
+  align-self: center;
 }
 
 /* Flower controls styling */
