@@ -302,7 +302,7 @@ body::after {
   border: 1px solid var(--border-soft);
   background: var(--bg-panel);
   box-shadow: var(--shadow-soft);
-  width: 340px;
+  width: 420px;
   height: min(70vh, 560px);
   flex-shrink: 0;
   overflow: hidden;
@@ -335,8 +335,8 @@ body::after {
 /* Ring controls styling */
 .ring-controls {
   position: relative;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   padding: 0;
   width: 100%;
@@ -354,7 +354,6 @@ body::after {
   left: 0;
   right: 0;
   margin-bottom: 8px;
-  grid-column: 1 / -1;
   min-height: 24px;
 }
 
@@ -366,7 +365,7 @@ body::after {
 
 .ring-controls__header h4 {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: 1rem;
   color: var(--accent);
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -378,19 +377,20 @@ body::after {
   border-radius: 10px;
   border: 1px solid var(--border-soft);
   background: rgba(59, 40, 26, 0.56);
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: row;
   gap: 6px;
+  align-items: center;
   min-width: 0;
 }
 
 .ring-group > h5 {
-  margin: 0 0 2px 0;
+  margin: 0 2px 0 0;
   font-size: 0.7rem;
   color: var(--fg-muted);
   letter-spacing: 0.03em;
   text-transform: uppercase;
-  grid-column: 1 / -1;
+  flex-shrink: 0;
 }
 
 .ring-group .control-btn {
@@ -400,6 +400,7 @@ body::after {
   min-height: 28px;
   border-radius: 6px;
   text-align: center;
+  min-width: 0;
 }
 
 .control-btn--tiny {
@@ -475,11 +476,20 @@ body::after {
   }
 
   .ring-controls {
-    grid-template-columns: repeat(4, 1fr);
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 12px;
   }
 
   .ring-group {
-    min-width: auto;
+    flex: 1;
+    min-width: 180px;
+    flex-direction: column;
+  }
+
+  .ring-group > h5 {
+    margin: 0 0 4px 0;
+    align-self: flex-start;
   }
 }
 
