@@ -237,7 +237,7 @@ body::after {
 .viewer {
   position: relative;
   flex: 1;
-  min-height: 62vh;
+  min-height: 68vh;
   border-radius: 32px;
   border: 1px solid var(--border-soft);
   overflow: hidden;
@@ -247,7 +247,7 @@ body::after {
 
 #dripCanvas {
   width: 100%;
-  height: min(78vh, 600px);
+  height: min(84vh, 650px);
   display: block;
 }
 
@@ -303,7 +303,7 @@ body::after {
   background: var(--bg-panel);
   box-shadow: var(--shadow-soft);
   width: 420px;
-  height: min(78vh, 600px);
+  height: min(84vh, 650px);
   flex-shrink: 0;
   overflow: hidden;
 }
