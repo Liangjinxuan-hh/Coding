@@ -366,7 +366,7 @@ body::after {
 
 .ring-controls__header h4 {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   color: var(--accent);
   letter-spacing: 0.05em;
   text-transform: uppercase;
