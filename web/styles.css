@@ -353,8 +353,8 @@ body::after {
   top: 0;
   left: 0;
   right: 0;
-  margin-bottom: 8px;
-  min-height: 24px;
+  margin-bottom: 12px;
+  min-height: auto;
 }
 
 .ring-controls__reset {
@@ -365,7 +365,7 @@ body::after {
 
 .ring-controls__header h4 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 2rem;
   color: var(--accent);
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -385,7 +385,7 @@ body::after {
 
 .ring-group > h5 {
   margin: 0 0 4px 0;
-  font-size: 0.7rem;
+  font-size: 1.4rem;
   color: var(--fg-muted);
   letter-spacing: 0.03em;
   text-transform: uppercase;
