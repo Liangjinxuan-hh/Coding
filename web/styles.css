@@ -302,7 +302,7 @@ body::after {
   border: 1px solid var(--border-soft);
   background: var(--bg-panel);
   box-shadow: var(--shadow-soft);
-  width: 240px;
+  width: 340px;
   height: min(70vh, 560px);
   flex-shrink: 0;
   overflow: hidden;
@@ -335,14 +335,13 @@ body::after {
 /* Ring controls styling */
 .ring-controls {
   position: relative;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 12px;
   padding: 0;
   width: 100%;
   flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 .ring-controls__header {
@@ -355,6 +354,7 @@ body::after {
   left: 0;
   right: 0;
   margin-bottom: 4px;
+  grid-column: 1 / -1;
 }
 
 .ring-controls__reset {
@@ -381,6 +381,7 @@ body::after {
   flex-direction: column;
   gap: 6px;
   align-items: stretch;
+  min-width: 0;
 }
 
 .ring-group > h5 {
@@ -473,14 +474,11 @@ body::after {
   }
 
   .ring-controls {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 12px;
+    grid-template-columns: repeat(4, 1fr);
   }
 
   .ring-group {
-    flex: 1;
-    min-width: 140px;
+    min-width: auto;
   }
 }
 
