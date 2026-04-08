@@ -377,10 +377,9 @@ body::after {
   border-radius: 10px;
   border: 1px solid var(--border-soft);
   background: rgba(59, 40, 26, 0.56);
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 6px;
-  align-items: stretch;
   min-width: 0;
 }
 
@@ -390,6 +389,7 @@ body::after {
   color: var(--fg-muted);
   letter-spacing: 0.03em;
   text-transform: uppercase;
+  grid-column: 1 / -1;
 }
 
 .ring-group .control-btn {
