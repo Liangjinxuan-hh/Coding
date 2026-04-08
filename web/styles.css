@@ -369,7 +369,7 @@ body::after {
   background: rgba(59, 40, 26, 0.56);
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
   align-items: center;
 }
 
@@ -383,9 +383,9 @@ body::after {
 
 .ring-group .control-btn {
   flex: none;
-  padding: 8px 10px;
-  font-size: 0.8rem;
-  min-height: 32px;
+  padding: 6px 8px;
+  font-size: 0.76rem;
+  min-height: 28px;
   border-radius: 8px;
 }
 
