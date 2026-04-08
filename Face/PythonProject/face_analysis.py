@@ -69,6 +69,81 @@ def mouth_aspect_ratio(landmarks, image, distance_ref, ratio_ref):
         return 0
 
 
+def _distance_2d(point_a, point_b):
+    return float(np.linalg.norm(np.array([point_a.x, point_a.y]) - np.array([point_b.x, point_b.y])))
+
+
+def detect_face_expression(landmarks, image, mar, mouth_threshold):
+    """根据嘴型和嘴角位置判断常见表情，并映射成节奏模式。
+    
+    改进的算法：更合理的表情识别条件，避免条件互相冲突
+    """
+    try:
+        upper_lip = landmarks[UPPER_LIP_CENTER_INDEX]
+        lower_lip = landmarks[LOWER_LIP_CENTER_INDEX]
+        left_corner = landmarks[61]
+        right_corner = landmarks[291]
+        left_eye = landmarks[33]
+        right_eye = landmarks[263]
+
+        eye_span = max(_distance_2d(left_eye, right_eye), 1e-4)
+        mouth_width_ratio = _distance_2d(left_corner, right_corner) / eye_span
+        mouth_center_y = (upper_lip.y + lower_lip.y) / 2.0
+        mouth_corner_y = (left_corner.y + right_corner.y) / 2.0
+        corner_lift = mouth_center_y - mouth_corner_y
+
+        # 诊断输出（临时用于调试）
+        print(f"[表情诊断] MAR={mar:.4f} 嘴宽比={mouth_width_ratio:.4f} 嘴角抬升={corner_lift:.6f}")
+
+        # ========== 改进的表情识别逻辑 ==========
+        # 优先级：嘴角下垂（负向情绪）> 大开口笑/惊讶 > 抿嘴微笑 > 平静
+        # 关键分离：抿嘴微笑必须满足“低 MAR”，避免与咧嘴大笑混淆。
+        
+        # 统一阈值（与 mouth_threshold 联动，并设安全下限）
+        grin_mar_high = max(mouth_threshold * 1.55, 0.19)
+        grin_mar_mid = max(mouth_threshold * 1.30, 0.16)
+        subtle_smile_mar_max = max(mouth_threshold * 1.08, 0.14)
+        grin_corner_lift_min_high = 0.006
+        grin_corner_lift_min_mid = 0.004
+        angry_corner_lift_max = -0.017
+        sad_corner_lift_max = -0.010
+        angry_mar_max = max(mouth_threshold * 1.03, 0.13)
+        sad_mar_min = max(mouth_threshold * 0.98, 0.12)
+        sad_mar_max = max(mouth_threshold * 1.24, 0.17)
+
+        # 1. 先判断嘴角下垂（负向表情）
+        # 愤怒：嘴角下压更强，且嘴更紧（MAR 更小）
+        if corner_lift <= angry_corner_lift_max and mar <= angry_mar_max:
+            return "愤怒", "angry"
+
+        # 难过抽泣交互已停用：保留条件但回退为平静，避免触发 slow 节奏。
+        if corner_lift <= sad_corner_lift_max and sad_mar_min <= mar <= sad_mar_max:
+            return "平静", "normal"
+
+        # 2. 大开口优先判定（先区分咧嘴大笑/惊讶）
+        # 咧嘴大笑需要：大开口 + 明显横向拉伸 + 嘴角上扬。
+        # 惊讶通常：大开口但嘴角不上扬（甚至下压）或横向拉伸不足。
+        if mar >= grin_mar_high:
+            if mouth_width_ratio >= 0.50 and corner_lift >= grin_corner_lift_min_high:
+                return "咧嘴大笑", "fast"
+            return "惊讶", "surprise"
+
+        # 中高开口时，仍要求一定嘴角上扬，避免把“惊讶张口”误判成咧嘴笑
+        if mar >= grin_mar_mid:
+            if mouth_width_ratio >= 0.46 and corner_lift >= grin_corner_lift_min_mid:
+                return "咧嘴大笑", "fast"
+            return "惊讶", "surprise"
+
+        # 3. 抿嘴微笑（严格限制：低开口 + 嘴角上扬 + 一定嘴宽）
+        if corner_lift > 0.010 and mar <= subtle_smile_mar_max and mouth_width_ratio >= 0.34:
+            return "抿嘴微笑", "happy"
+        
+        # 3. 默认
+        return "平静", "normal"
+    except (IndexError, TypeError):
+        return "平静", "normal"
+
+
 def detect_face_direction(landmarks):
     """根据关键点判断头部左右转动方向"""
     try:
@@ -82,13 +157,12 @@ def detect_face_direction(landmarks):
         # 鼻尖相对于眼睛中心的偏移量
         delta_x = nose_tip.x - center_x
 
-        # 由于视频画面是水平镜像的，所以逻辑需要反转
-        # 当人向右转时，在镜像画面中，鼻子会向右移动，x坐标变大
+        # 输入帧已做镜像，用户视角下的左右应在此反向修正：
+        # 向左看 -> LOOK_LEFT，向右看 -> LOOK_RIGHT。
         if delta_x > 0.02:
-            return "LOOK_RIGHT"
-        # 当人向左转时，在镜像画面中，鼻子会向左移动，x坐标变小
-        elif delta_x < -0.02:
             return "LOOK_LEFT"
+        elif delta_x < -0.02:
+            return "LOOK_RIGHT"
         else:
             return "LOOK_FORWARD"
     except (IndexError, TypeError):
@@ -144,17 +218,18 @@ def detect_head_tilt(landmarks):
 def detect_eye_pattern(left_ear, right_ear, threshold):
     """左右眼独立开合组合映射为 A/B/C/D。
 
-    A: 左睁右闭
-    B: 左闭右睁
+    A: 用户视角左眼单开（镜像输入下对应 right_open）
+    B: 用户视角右眼单开（镜像输入下对应 left_open）
     C: 双眼睁
     D: 双眼闭
     """
     left_open = left_ear >= threshold
     right_open = right_ear >= threshold
 
-    if left_open and not right_open:
-        return "A"
+    # 摄像头帧在主流程中已镜像，A/B 在此做左右对调以匹配用户直觉。
     if (not left_open) and right_open:
+        return "A"
+    if left_open and (not right_open):
         return "B"
     if left_open and right_open:
         return "C"

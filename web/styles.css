@@ -183,6 +183,12 @@ body::after {
   color: var(--accent-strong);
 }
 
+.module-btn--active {
+  background: rgba(101, 248, 211, 0.28);
+  color: #65f8d3;
+  border-color: rgba(101, 248, 211, 0.5);
+}
+
 .module-control__status {
   display: flex;
   flex-wrap: wrap;
@@ -618,6 +624,10 @@ body::after {
   gap: 8px;
 }
 
+.module-inline__buttons--face {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .module-inline .module-btn {
   padding: 10px 10px;
   border-radius: 10px;
@@ -641,6 +651,10 @@ body::after {
   }
 
   .module-control__buttons {
+    grid-template-columns: 1fr;
+  }
+
+  .module-inline__buttons--face {
     grid-template-columns: 1fr;
   }
 

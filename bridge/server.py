@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Set
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, constr
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 BRIDGE_PORT = int(os.getenv("DRIP_BRIDGE_PORT", "5051"))
@@ -167,7 +167,8 @@ class ControlRequest(BaseModel):
 
 
 class VoicePlanRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=200)
+    # Strip whitespace before validating length so blank text fails with 422.
+    text: constr(strip_whitespace=True, min_length=1, max_length=200)
 
 
 def _normalize_action(action: str) -> str:
@@ -346,9 +347,7 @@ async def control_module(req: ControlRequest) -> Dict[str, Any]:
 
 @app.post("/api/ai/voice-plan")
 async def ai_voice_plan(req: VoicePlanRequest) -> Dict[str, Any]:
-    text = req.text.strip()
-    if not text:
-        return {"status": "error", "message": "empty_text"}
+    text = req.text
 
     llm_plan = await asyncio.to_thread(_call_llm_voice_plan, text)
     normalized = _normalize_plan(llm_plan, text)

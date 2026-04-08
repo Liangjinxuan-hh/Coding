@@ -7,7 +7,6 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>滴动仪 · 三维交互面板</title>
-    <link rel="preload" href="./models/chaifen.fbx?v=20260324-chaifen-current" as="fetch" crossorigin="anonymous" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%2365f8d3'/%3E%3Cstop offset='100%25' stop-color='%23ff9d5c'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='32' cy='32' r='30' fill='%2308161f'/%3E%3Cpath d='M32 10c6 10 8 15 8 22a8 8 0 1 1-16 0c0-7 2-12 8-22z' fill='url(%23g)'/%3E%3Ccircle cx='32' cy='44' r='7' fill='%23ffffff' fill-opacity='0.15'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="styles.css?v=20260326-beige" />
     <script type="importmap">
@@ -105,9 +104,16 @@
           <div class="video-wrapper">
             <img id="faceStream" class="insight-video" alt="面部摄像头画面" />
           </div>
-          <p id="faceStatus">当前状态：等待检测...</p>
+          <ul id="faceGestureList" class="gesture-log" aria-label="面部识别结果">
+            <li>当前环：--</li>
+            <li>当前行为：等待检测...</li>
+            <li>当前表情：平静</li>
+            <li>当前节奏：正常</li>
+            <li>表情控制：关闭</li>
+          </ul>
           <div class="module-inline" aria-label="面部交互控制">
-            <div class="module-inline__buttons">
+            <div class="module-inline__buttons module-inline__buttons--face">
+              <button id="faceTempoToggle" class="module-btn">表情控制：关闭</button>
               <button id="faceStart" class="module-btn">开启面部交互</button>
               <button id="faceStop" class="module-btn module-btn--stop" disabled>结束面部交互</button>
             </div>
@@ -125,7 +131,6 @@
           <div class="video-wrapper">
             <img id="handStream" class="insight-video" alt="手势摄像头画面" />
           </div>
-          <p>实时映射左右手的 LED 列与手势动作，驱动 3D 控制命令。</p>
           <div class="module-inline" aria-label="手势交互控制">
             <div class="module-inline__buttons">
               <button id="handStart" class="module-btn">开启手势交互</button>
@@ -156,6 +161,6 @@
 
     </main>
 
-    <script type="module" src="client-main.js?v=20260324-flower-debug-mode"></script>
+    <script type="module" src="client-main.js?v=20260408-face-expression-tempo-v5"></script>
   </body>
 </html>

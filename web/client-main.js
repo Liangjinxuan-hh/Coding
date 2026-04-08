@@ -121,6 +121,7 @@ const handStateEl = document.getElementById("handState");
 const voiceStateEl = document.getElementById("voiceState");
 const faceStartBtn = document.getElementById("faceStart");
 const faceStopBtn = document.getElementById("faceStop");
+const faceTempoToggleBtn = document.getElementById("faceTempoToggle");
 const handStartBtn = document.getElementById("handStart");
 const handStopBtn = document.getElementById("handStop");
 const voiceStartBtn = document.getElementById("voiceStart");
@@ -133,7 +134,6 @@ const partBodyOnlyBtn = document.getElementById("partBodyOnly");
 const partDebugStatusEl = document.getElementById("partDebugStatus");
 
 const faceBindings = {
-  status: document.getElementById("faceStatus"),
   direction: document.getElementById("faceDirection"),
   eye: document.getElementById("faceEye"),
   mouth: document.getElementById("faceMouth"),
@@ -141,6 +141,7 @@ const faceBindings = {
   cmd: document.getElementById("faceCommand"),
   mode: document.getElementById("faceMode"),
   stream: document.getElementById("faceStream"),
+  gestures: document.getElementById("faceGestureList"),
 };
 
 const handBindings = {
@@ -196,10 +197,15 @@ const ringStates = {};
     rotationOffset: 0,
     heightCm: 0,
     angleDeg: 0,
+    baseMoveSpeed: 0.45,
+    baseRotateSpeed: THREE.MathUtils.degToRad(60),
+    tempoMode: "normal",
     // 初始值会在模型加载后按模型尺寸自适应覆盖
     limits: { min: -0.35, max: 0.35 },
     moveSpeed: 0.45,
     rotateSpeed: THREE.MathUtils.degToRad(60),
+    expressionRotateDir: 1,
+    expressionRotateAccum: 0,
   };
 });
 
@@ -218,6 +224,7 @@ const ringBindings = {};
   ringBindings[ring] = {
     moveTarget: null,
     rotateTarget: null,
+    baseMoveY: 0,
     baseY: 0,
     baseRotation: 0,
     rotationAxis: "z",
@@ -436,8 +443,9 @@ function syncRingMotionBinding(ring) {
   const state = ringStates[ring];
   if (!state) return;
 
-  // 将上下位移施加在旋转枢轴上，保证沿世界竖直方向起伏
-  binding.rotateTarget.position.y = binding.baseY + state.heightOffset;
+  // 上下位移施加在 moveTarget 上，保证位移与旋转可叠加且效果稳定可见。
+  binding.moveTarget.position.y = binding.baseMoveY + state.heightOffset;
+  binding.rotateTarget.position.y = binding.baseY;
   binding.rotateTarget.rotation[binding.rotationAxis] = binding.baseRotation + state.rotationOffset;
   state.heightCm = state.heightOffset * 100;
   state.angleDeg = normalizeDegrees(THREE.MathUtils.radToDeg(state.rotationOffset));
@@ -1148,6 +1156,7 @@ function bindPerRingMotionTargets(root) {
     // 保存到 ringBindings（使用单字母键）
     ringBindings[ring].moveTarget = moveTarget;
     ringBindings[ring].rotateTarget = rotateTarget;
+    ringBindings[ring].baseMoveY = moveTarget.position.y;
     ringBindings[ring].baseY = basePivotY;
     ringBindings[ring].baseRotation = 0; // 初始旋转为 0
     ringBindings[ring].rotationAxis = "y";
@@ -1158,7 +1167,10 @@ function bindPerRingMotionTargets(root) {
       // 因此：上移幅度对应 limits.min 的绝对值；下移幅度对应 limits.max
       ringStates[ring].limits.min = -upLiftLocal;
       ringStates[ring].limits.max = downLiftLocal;
-      ringStates[ring].moveSpeed = Math.max(upLiftLocal, downLiftLocal) * RING_LIFT_SPEED_FACTOR;
+      ringStates[ring].baseMoveSpeed = Math.max(upLiftLocal, downLiftLocal) * RING_LIFT_SPEED_FACTOR;
+      ringStates[ring].baseRotateSpeed = THREE.MathUtils.degToRad(60);
+      ringStates[ring].moveSpeed = ringStates[ring].baseMoveSpeed;
+      ringStates[ring].rotateSpeed = ringStates[ring].baseRotateSpeed;
     }
 
     successCount++;
@@ -1513,34 +1525,38 @@ function stepPhysics(delta) {
   syncMotionBinding();
 
   // === PER-RING MOTION (new independent control) ===
-  for (const ring of ["A", "B", "C", "D"]) {
-    const state = ringStates[ring];
-    if (!state) continue;
+  if (faceExpressionControlEnabled) {
+    applyExpressionRhythmToAllRings(delta);
+  } else {
+    for (const ring of ["A", "B", "C", "D"]) {
+      const state = ringStates[ring];
+      if (!state) continue;
 
-    // Update height offset (move up/down)
-    if (state.moveDir !== 0) {
-      const offset = state.moveDir * state.moveSpeed * delta;
-      state.heightOffset = clamp(state.heightOffset + offset, state.limits.min, state.limits.max);
-      const reachedTop = state.heightOffset >= state.limits.max && state.moveDir > 0;
-      const reachedBottom = state.heightOffset <= state.limits.min && state.moveDir < 0;
-      if (reachedTop || reachedBottom) {
-        state.moveDir = 0;
-        if (reachedTop) {
-          updateStatus(state.rotateDir === 0 ? `Ring${ring} - 达到最高点` : `Ring${ring} - 达到最高点，继续旋转`);
-        }
-        if (reachedBottom) {
-          updateStatus(state.rotateDir === 0 ? `Ring${ring} - 达到最低点` : `Ring${ring} - 达到最低点，继续旋转`);
+      // Update height offset (move up/down)
+      if (state.moveDir !== 0) {
+        const offset = state.moveDir * state.moveSpeed * delta;
+        state.heightOffset = clamp(state.heightOffset + offset, state.limits.min, state.limits.max);
+        const reachedTop = state.heightOffset >= state.limits.max && state.moveDir > 0;
+        const reachedBottom = state.heightOffset <= state.limits.min && state.moveDir < 0;
+        if (reachedTop || reachedBottom) {
+          state.moveDir = 0;
+          if (reachedTop) {
+            updateStatus(state.rotateDir === 0 ? `Ring${ring} - 达到最高点` : `Ring${ring} - 达到最高点，继续旋转`);
+          }
+          if (reachedBottom) {
+            updateStatus(state.rotateDir === 0 ? `Ring${ring} - 达到最低点` : `Ring${ring} - 达到最低点，继续旋转`);
+          }
         }
       }
-    }
 
-    // Update rotation offset (rotate left/right)
-    if (state.rotateDir !== 0) {
-      state.rotationOffset += state.rotateDir * state.rotateSpeed * delta;
-    }
+      // Update rotation offset (rotate left/right)
+      if (state.rotateDir !== 0) {
+        state.rotationOffset += state.rotateDir * state.rotateSpeed * delta;
+      }
 
-    // Sync with 3D binding for this ring
-    syncRingMotionBinding(ring);
+      // Sync with 3D binding for this ring
+      syncRingMotionBinding(ring);
+    }
   }
 
   // === FLOWER ANIMATION ===
@@ -1569,8 +1585,6 @@ function renderLoop() {
   controls.update();
   renderer.render(scene, camera);
 }
-
-renderLoop();
 
 const buttons = document.querySelectorAll(".control-btn");
 buttons.forEach((btn) => {
@@ -1605,6 +1619,280 @@ const FACE_RING_COMMANDS = {
 };
 
 let activeFaceRing = null;
+let activeFaceBehavior = "等待检测";
+let activeFaceExpression = "平静";
+let activeFaceTempo = "normal";
+let faceExpressionControlEnabled = false;
+let faceRhythmClockSec = 0;
+
+renderLoop();
+
+const FACE_TEMPO_LABELS = {
+  normal: "正常",
+  happy: "欢快",
+  fast: "快速",
+  slow: "缓慢",
+  surprise: "旋转加快",
+  angry: "强力旋转",
+};
+
+const FACE_TEMPO_FACTORS = {
+  normal: 1.0,
+  happy: 1.2,
+  fast: 1.8,
+  slow: 0.65,
+  surprise: 1.15,
+  angry: 0.9,
+};
+
+const FACE_TEMPO_ROTATE_BOOSTS = {
+  normal: 1.0,
+  happy: 1.15,
+  fast: 1.55,
+  slow: 0.75,
+  surprise: 1.8,
+  angry: 2.0,
+};
+
+function faceActionLabel(command) {
+  const labels = {
+    LOOK_LEFT: "左转",
+    LOOK_RIGHT: "右转",
+    LOOK_UP: "上移",
+    LOOK_DOWN: "下移",
+    OPEN_EYES: "上移",
+    CLOSE_EYES: "下移",
+    OPEN_MOUTH: "上移",
+    CLOSE_MOUTH: "停止",
+    DEFAULT: "停止",
+  };
+  return labels[command] || "等待检测";
+}
+
+function applyFaceTempoToRing(ring, tempoMode) {
+  const state = ringStates[ring];
+  if (!state) return;
+  const factor = FACE_TEMPO_FACTORS[tempoMode] ?? 1.0;
+  const rotateBoost = FACE_TEMPO_ROTATE_BOOSTS[tempoMode] ?? 1.0;
+  if (typeof state.baseMoveSpeed !== "number") {
+    state.baseMoveSpeed = state.moveSpeed;
+  }
+  if (typeof state.baseRotateSpeed !== "number") {
+    state.baseRotateSpeed = state.rotateSpeed;
+  }
+  state.tempoMode = tempoMode;
+  state.moveSpeed = state.baseMoveSpeed * factor;
+  state.rotateSpeed = state.baseRotateSpeed * factor * rotateBoost;
+}
+
+function applyActiveFaceTempo() {
+  if (faceExpressionControlEnabled) return;
+  if (!activeFaceRing || !["A", "B", "C", "D"].includes(activeFaceRing)) return;
+  applyFaceTempoToRing(activeFaceRing, faceExpressionControlEnabled ? activeFaceTempo : "normal");
+}
+
+function resetAllRingsToHome(statusText = null) {
+  for (const ring of ["A", "B", "C", "D"]) {
+    const state = ringStates[ring];
+    if (!state) continue;
+    state.moveDir = 0;
+    state.rotateDir = 0;
+    state.heightOffset = 0;
+    state.rotationOffset = 0;
+    state.expressionRotateDir = 1;
+    state.expressionRotateAccum = 0;
+    state.tempoMode = "normal";
+    if (typeof state.baseMoveSpeed === "number") {
+      state.moveSpeed = state.baseMoveSpeed;
+    }
+    if (typeof state.baseRotateSpeed === "number") {
+      state.rotateSpeed = state.baseRotateSpeed;
+    }
+    syncRingMotionBinding(ring);
+  }
+  if (statusText) {
+    updateStatus(statusText);
+  }
+}
+
+function getFaceRhythmProfile(expression) {
+  const map = {
+    平静: {
+      freq: 1.0, amp: 0.16, rotateDeg: 12, pulse: 0.05, sharp: 0.0, stagger: 0.6,
+      bobFreq: 0.95, bobAmp: 0.04, bobPunch: 0.012, bobBias: 0.0,
+      choreoAmp: 0.42, choreoSpeed: 0.75,
+    },
+    抿嘴微笑: {
+      freq: 1.7, amp: 0.24, rotateDeg: 20, pulse: 0.10, sharp: 0.15, stagger: 0.9,
+      bobFreq: 1.45, bobAmp: 0.085, bobPunch: 0.03, bobBias: 0.012,
+      choreoAmp: 0.62, choreoSpeed: 1.0,
+    },
+    咧嘴大笑: {
+      freq: 2.7, amp: 0.40, rotateDeg: 34, pulse: 0.22, sharp: 0.35, stagger: 1.15,
+      bobFreq: 2.1, bobAmp: 0.14, bobPunch: 0.07, bobBias: 0.04,
+      choreoAmp: 0.78, choreoSpeed: 1.35,
+    },
+    惊讶: {
+      freq: 3.4, amp: 0.30, rotateDeg: 44, pulse: 0.30, sharp: 0.45, stagger: 1.6,
+      bobFreq: 3.25, bobAmp: 0.18, bobPunch: 0.12, bobBias: 0.10,
+      choreoAmp: 0.90, choreoSpeed: 1.7,
+    },
+    愤怒: {
+      freq: 2.15, amp: 0.36, rotateDeg: 58, pulse: 0.26, sharp: 0.7, stagger: 1.9,
+      bobFreq: 2.45, bobAmp: 0.12, bobPunch: 0.13, bobBias: -0.04,
+      choreoAmp: 0.78, choreoSpeed: 1.45,
+    },
+  };
+  return map[expression] || map.平静;
+}
+
+function smoothStep01(x) {
+  const t = clamp(x, 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function sequentialRingWave(normalizedCycle, ring, upOrder, downOrder) {
+  // 一个循环：按 upOrder 逐个上移，再按 downOrder 逐个下移。
+  const c = ((normalizedCycle % 1) + 1) % 1;
+  const stepPos = c * 8;
+  const seg = Math.floor(stepPos);
+  const p = stepPos - seg;
+
+  if (seg < 4) {
+    const idx = upOrder.indexOf(ring);
+    if (idx < 0) return -1;
+    if (idx < seg) return 1;
+    if (idx === seg) return -1 + 2 * smoothStep01(p);
+    return -1;
+  }
+
+  const downSeg = seg - 4;
+  const idx = downOrder.indexOf(ring);
+  if (idx < 0) return 1;
+  if (idx < downSeg) return -1;
+  if (idx === downSeg) return 1 - 2 * smoothStep01(p);
+  return 1;
+}
+
+function applyExpressionRhythmToAllRings(delta) {
+  faceRhythmClockSec += delta;
+  const t = faceRhythmClockSec;
+  const profile = getFaceRhythmProfile(activeFaceExpression);
+  const phases = { A: 0, B: 1.17, C: 2.34, D: 3.51 };
+  const normalizedCycle = (t * profile.choreoSpeed) % 1;
+  const pairOsc = Math.sin(normalizedCycle * Math.PI * 2);
+
+  for (const ring of ["A", "B", "C", "D"]) {
+    const state = ringStates[ring];
+    if (!state) continue;
+
+    const phase = phases[ring] * profile.stagger;
+    const baseWave = Math.sin(t * profile.freq + phase);
+    const subWave = Math.sin(t * profile.freq * 2.1 + phase * 0.6);
+    const pulseWave = Math.max(0, Math.sin(t * profile.freq * 1.35 + phase * 1.4));
+    const sharpWave = Math.sign(baseWave) * Math.pow(Math.abs(baseWave), Math.max(0.01, 1 - profile.sharp));
+    // 上下律动按表情配置：不同情绪对应不同快慢与轻重。
+    const bobWave = Math.sin(t * profile.bobFreq + phase * 0.75);
+    const bobPulse = Math.max(0, Math.sin(t * profile.bobFreq * 1.85 + phase * 1.1));
+    const emotionBob = bobWave * profile.bobAmp + bobPulse * profile.bobPunch + profile.bobBias;
+
+    let desiredSpinDir = 1;
+    let choreoMotion = 0;
+
+    if (activeFaceExpression === "抿嘴微笑") {
+      // AC 左转，BD 右转；ABCD 逐个上移，再 DCBA 逐个下降。
+      desiredSpinDir = ring === "A" || ring === "C" ? 1 : -1;
+      choreoMotion = sequentialRingWave(normalizedCycle, ring, ["A", "B", "C", "D"], ["D", "C", "B", "A"]);
+    } else if (activeFaceExpression === "咧嘴大笑") {
+      // AC 右转，BD 左转；AC 与 BD 反向同步上下。
+      desiredSpinDir = ring === "A" || ring === "C" ? -1 : 1;
+      choreoMotion = (ring === "A" || ring === "C") ? pairOsc : -pairOsc;
+    } else if (activeFaceExpression === "惊讶") {
+      // AB 左转，CD 右转；AD 与 BC 反向同步上下。
+      desiredSpinDir = ring === "A" || ring === "B" ? 1 : -1;
+      choreoMotion = (ring === "A" || ring === "D") ? pairOsc : -pairOsc;
+    } else if (activeFaceExpression === "愤怒") {
+      // ABCD 同向左转；AC 与 BD 反向同步上下。
+      desiredSpinDir = 1;
+      choreoMotion = (ring === "A" || ring === "C") ? pairOsc : -pairOsc;
+    } else {
+      // 平静等默认：轻微同相上下。
+      desiredSpinDir = 1;
+      choreoMotion = Math.sin(normalizedCycle * Math.PI * 2 + phase * 0.35) * 0.45;
+    }
+
+    let heightNorm = sharpWave * profile.amp + subWave * profile.pulse * 0.35 + pulseWave * profile.pulse * 0.65 + emotionBob + choreoMotion * profile.choreoAmp;
+    if (activeFaceExpression === "惊讶") heightNorm += 0.12;
+    heightNorm = clamp(heightNorm, -0.95, 0.95);
+
+    const ringRange = Math.min(Math.abs(state.limits.min), Math.abs(state.limits.max));
+    const usableRange = Math.max(0.03, ringRange * 0.9);
+
+    state.moveDir = 0;
+    state.rotateDir = 0;
+    state.heightOffset = clamp(heightNorm * usableRange, state.limits.min, state.limits.max);
+
+    // 旋转策略：每个环必须先完整转一圈（360°）后才允许切换方向。
+    if (state.expressionRotateDir !== desiredSpinDir && state.expressionRotateAccum >= Math.PI * 2) {
+      state.expressionRotateDir = desiredSpinDir;
+      state.expressionRotateAccum = 0;
+    }
+
+    const rotateSpeedRad = THREE.MathUtils.degToRad(profile.rotateDeg);
+    const deltaAngle = state.expressionRotateDir * rotateSpeedRad * delta;
+    state.rotationOffset += deltaAngle;
+    state.expressionRotateAccum += Math.abs(deltaAngle);
+
+    syncRingMotionBinding(ring);
+  }
+}
+
+function setFaceExpressionControlEnabled(enabled) {
+  faceExpressionControlEnabled = Boolean(enabled);
+  faceRhythmClockSec = 0;
+  if (faceTempoToggleBtn) {
+    faceTempoToggleBtn.textContent = faceExpressionControlEnabled ? "表情控制：开启" : "表情控制：关闭";
+    // 清除停止样式，启用时使用正常样式，禁用时恢复停止样式
+    faceTempoToggleBtn.classList.toggle("module-btn--stop", !faceExpressionControlEnabled);
+    // 添加视觉反馈：启用时添加活跃状态
+    faceTempoToggleBtn.classList.toggle("module-btn--active", faceExpressionControlEnabled);
+  }
+
+  if (faceExpressionControlEnabled) {
+    activeFaceRing = null;
+    activeFaceBehavior = "表情节奏模式（全环联动）";
+    resetAllRingsToHome("表情节奏模式：全环归位完成");
+  } else {
+    activeFaceBehavior = "选环动作模式";
+    resetAllRingsToHome("已退出表情节奏模式");
+  }
+
+  applyActiveFaceTempo();
+  renderFaceGestureInfo();
+}
+
+function renderFaceGestureInfo() {
+  if (!faceBindings.gestures) return;
+  const ringText = faceExpressionControlEnabled ? "全环联动" : (activeFaceRing ? `Ring${activeFaceRing}` : "--");
+  const behaviorText = activeFaceBehavior || "等待检测";
+  const expressionText = activeFaceExpression || "平静";
+  const tempoText = FACE_TEMPO_LABELS[activeFaceTempo] || "正常";
+  const controlText = faceExpressionControlEnabled ? "开启" : "关闭";
+  const modeText = faceExpressionControlEnabled ? "表情节奏模式" : "选环动作模式";
+  faceBindings.gestures.innerHTML = "";
+  [
+    `当前模式：${modeText}`,
+    `当前环：${ringText}`,
+    `当前行为：${behaviorText}`,
+    `当前表情：${expressionText}`,
+    `当前节奏：${tempoText}`,
+    `表情控制：${controlText}`,
+  ].forEach((line) => {
+    const li = document.createElement("li");
+    li.textContent = line;
+    faceBindings.gestures.appendChild(li);
+  });
+}
 
 const HAND_COMMAND_MAP = {
   moveUp: "moveUp",
@@ -1647,7 +1935,18 @@ function setModuleState(target, running, error = false) {
   const stopBtn = target === "face" ? faceStopBtn : target === "hand" ? handStopBtn : voiceStopBtn;
   if (startBtn) startBtn.disabled = running;
   if (stopBtn) stopBtn.disabled = !running;
+  if (target === "face" && faceTempoToggleBtn) {
+    faceTempoToggleBtn.disabled = !running;
+  }
   setStreamVisibility(target, running);
+
+  if (target === "face" && !running) {
+    activeFaceBehavior = "等待检测";
+    activeFaceExpression = "平静";
+    activeFaceTempo = "normal";
+    setFaceExpressionControlEnabled(false);
+    renderFaceGestureInfo();
+  }
 }
 
 let bridgeRetryDelayMs = 1000;
@@ -1786,9 +2085,24 @@ function handleBridgeEvent(message) {
       faceBindings.stream.src = `data:image/jpeg;base64,${message.payload.data}`;
     }
     if (message.type === "command") {
+      const faceCommand = message.payload?.command;
+      if (faceBindings.cmd && faceCommand) {
+        faceBindings.cmd.textContent = faceCommand;
+      }
+
+      // 表情节奏模式下，禁用“选环 + 单环动作”链路。
+      if (faceExpressionControlEnabled) {
+        activeFaceBehavior = "表情节奏模式（全环联动）";
+        renderFaceGestureInfo();
+        return;
+      }
+
       const ringFromFace = FACE_RING_COMMANDS[message.payload?.command];
       if (ringFromFace) {
         activeFaceRing = ringFromFace;
+        activeFaceBehavior = `选中 Ring${ringFromFace}`;
+        applyActiveFaceTempo();
+        renderFaceGestureInfo();
         if (faceBindings.cmd) {
           faceBindings.cmd.textContent = `SELECT_RING_${ringFromFace}`;
         }
@@ -1799,8 +2113,9 @@ function handleBridgeEvent(message) {
       }
 
       const next = FACE_COMMAND_MAP[message.payload?.command];
-      if (faceBindings.cmd && message.payload?.command) {
-        faceBindings.cmd.textContent = message.payload.command;
+      if (message.payload?.command) {
+        activeFaceBehavior = faceActionLabel(message.payload.command);
+        renderFaceGestureInfo();
       }
       if (next) {
         if (activeFaceRing && ["A", "B", "C", "D"].includes(activeFaceRing)) {
@@ -2024,8 +2339,7 @@ async function refreshModuleStatus() {
 }
 
 function updateFaceCard(payload) {
-  if (!faceBindings.status) return;
-  if (payload.status_text) {
+  if (payload.status_text && faceBindings.status) {
     faceBindings.status.textContent = `当前状态：${payload.status_text}`;
   }
   if (payload.direction && faceBindings.direction) {
@@ -2035,10 +2349,19 @@ function updateFaceCard(payload) {
   if (payload.mouth && faceBindings.mouth) faceBindings.mouth.textContent = payload.mouth;
   if (payload.serial_status && faceBindings.serial) faceBindings.serial.textContent = payload.serial_status;
   if (payload.last_command && faceBindings.cmd) faceBindings.cmd.textContent = payload.last_command;
+  if (typeof payload.expression === "string") {
+    const normalizedExpression = payload.expression === "难过抽泣" ? "平静" : payload.expression;
+    activeFaceExpression = normalizedExpression;
+    const normalizedTempo = payload.tempo === "slow" ? "normal" : payload.tempo;
+    const nextTempo = normalizedTempo && FACE_TEMPO_FACTORS[normalizedTempo] ? normalizedTempo : "normal";
+    activeFaceTempo = nextTempo;
+    applyActiveFaceTempo();
+  }
   if (faceBindings.mode) {
     faceBindings.mode.textContent = payload.calibrated ? "已校准" : "校准中";
     faceBindings.mode.classList.toggle("alert", !payload.calibrated);
   }
+  renderFaceGestureInfo();
 }
 
 function updateVoiceCard(payload) {
@@ -2066,15 +2389,33 @@ function updateVoiceCard(payload) {
 }
 
 function updateHandCard(payload) {
-  if (Array.isArray(payload.gestures) && handBindings.gestures) {
-    const lines = payload.gestures.slice(-4);
-    handBindings.gestures.innerHTML = "";
-    lines.forEach((line) => {
-      const li = document.createElement("li");
-      li.textContent = line;
-      handBindings.gestures.appendChild(li);
-    });
-  }
+  if (!handBindings.gestures) return;
+
+  const lines = Array.isArray(payload.gestures)
+    ? payload.gestures.filter((line) => typeof line === "string" && line.trim().length > 0)
+    : [];
+
+  const left = payload.left_status || {};
+  const right = payload.right_status || {};
+
+  const leftGesture = typeof left.ring_gesture === "string" ? left.ring_gesture : "not_detected";
+  const leftActive = typeof left.active_ring === "string" ? left.active_ring : "A";
+  const rightDirection = typeof right.index_direction === "string" ? right.index_direction : "not_detected";
+
+  const fallbackLines = [
+    `Left Ring Gesture: ${leftGesture}`,
+    `Left Active Ring: ${leftActive}`,
+    `Right Index Direction: ${rightDirection}`,
+  ];
+
+  const renderLines = lines.length > 0 ? lines.slice(-4) : fallbackLines;
+
+  handBindings.gestures.innerHTML = "";
+  renderLines.forEach((line) => {
+    const li = document.createElement("li");
+    li.textContent = line;
+    handBindings.gestures.appendChild(li);
+  });
 }
 
 function renderLedColumns(payload) {
@@ -2116,6 +2457,11 @@ function relayExternalCommand(source, mappedCommand, rawPayload) {
 
 if (faceStartBtn) faceStartBtn.addEventListener("click", () => callModuleControl("face", "start"));
 if (faceStopBtn) faceStopBtn.addEventListener("click", () => callModuleControl("face", "stop"));
+if (faceTempoToggleBtn) {
+  faceTempoToggleBtn.addEventListener("click", () => {
+    setFaceExpressionControlEnabled(!faceExpressionControlEnabled);
+  });
+}
 if (handStartBtn) handStartBtn.addEventListener("click", () => callModuleControl("hand", "start"));
 if (handStopBtn) handStopBtn.addEventListener("click", () => callModuleControl("hand", "stop"));
 if (voiceStartBtn) voiceStartBtn.addEventListener("click", () => callModuleControl("voice", "start"));

@@ -12,7 +12,7 @@ import base64
 import config as app_config
 from config import CONFIG, load_config, LEFT_EYE_EAR_POINTS, RIGHT_EYE_EAR_POINTS, LAST_COMMAND_SENT
 from serial_comms import initialize_serial, send_command, receive_data
-from face_analysis import eye_aspect_ratio, mouth_aspect_ratio, detect_face_direction, detect_head_tilt, detect_eye_pattern
+from face_analysis import eye_aspect_ratio, mouth_aspect_ratio, detect_face_direction, detect_head_tilt, detect_eye_pattern, detect_face_expression
 from ui_utils import show_settings_window, get_chinese_font, draw_text
 from ui_manager import Button
 from web_bridge import publish_face_snapshot, publish_face_frame
@@ -222,6 +222,8 @@ def main(tk_root):
         direction = "LOOK_CENTER"
         tilt = "LOOK_STRAIGHT"
         eye_pattern = None
+        expression = "平静"
+        tempo_mode = "normal"
         current_eye_state = last_eye_state
         current_mouth_state = last_mouth_state
         has_face = bool(task_face_landmarks) if use_tasks_api else bool(results and results.multi_face_landmarks)
@@ -271,7 +273,8 @@ def main(tk_root):
             else:
                 current_eye_state = "睁眼"
 
-            eye_pattern = detect_eye_pattern(left_ear, right_ear, dynamic_eye_threshold)
+            eye_pattern_raw = detect_eye_pattern(left_ear, right_ear, dynamic_eye_threshold)
+            eye_pattern = eye_pattern_raw if eye_pattern_raw in {"A", "B"} else None
 
             # 嘴巴状态
             mouth_dist_ref = [0]
@@ -281,6 +284,8 @@ def main(tk_root):
                 current_mouth_state = "张嘴"
             else:
                 current_mouth_state = "闭嘴"
+
+            expression, tempo_mode = detect_face_expression(landmarks, image, mar, CONFIG['MOUTH_THRESHOLD'])
 
             # 头部方向
             direction = detect_face_direction(landmarks)
@@ -292,10 +297,20 @@ def main(tk_root):
 
             if current_time - last_state_change_time > state_change_cooldown:
                 command = None
+                ring_pattern = None
 
-                if eye_pattern and eye_pattern != last_eye_pattern:
-                    command = f"SELECT_RING_{eye_pattern}"
-                    last_eye_pattern = eye_pattern
+                # 防混淆：仅在脸朝前时允许选环。
+                # 左右转头阶段只发送方向控制，避免因单眼可见导致 A/B 误选。
+                if direction == "LOOK_FORWARD":
+                    # 双眼睁开时，用嘴巴开合选择 C / D 环。
+                    if current_eye_state == "睁眼":
+                        ring_pattern = "C" if current_mouth_state == "张嘴" else "D"
+                    elif eye_pattern in {"A", "B"}:
+                        ring_pattern = eye_pattern
+
+                if ring_pattern and ring_pattern != last_eye_pattern:
+                    command = f"SELECT_RING_{ring_pattern}"
+                    last_eye_pattern = ring_pattern
 
                 elif current_eye_state != last_eye_state:
                     command = "CLOSE_EYES" if current_eye_state == "闭眼" else "OPEN_EYES"
@@ -328,9 +343,11 @@ def main(tk_root):
                     last_state_change_time = current_time
 
             tilt_label = tilt.replace('LOOK_', '')
+            ring_gate_text = "选环已启用" if direction == "LOOK_FORWARD" else "选环暂停(转头中)"
+            active_ring_text = last_eye_pattern or '-'
             current_face_status = (
                 f"头:{direction.replace('LOOK_', '')}/{tilt_label} | "
-                f"眼:{current_eye_state}({eye_pattern or '-'}) | 嘴:{current_mouth_state}"
+                f"环:{active_ring_text} | 眼:{current_eye_state}({eye_pattern or '-'}) | 嘴:{current_mouth_state} | 表情:{expression} | 节奏:{tempo_mode} | {ring_gate_text}"
             )
 
         else:
@@ -355,6 +372,8 @@ def main(tk_root):
             "direction": direction,
             "tilt": tilt,
             "eye_pattern": eye_pattern,
+            "expression": expression,
+            "tempo": tempo_mode,
             "calibrated": calibrated,
             "serial_status": app_config.serial_status,
             "last_command": LAST_COMMAND_SENT[0],

@@ -39,6 +39,38 @@ $env:DRIP_BRIDGE_PORT = "$bridgePort"
 $env:DRIP_EVENT_ENDPOINT = "http://127.0.0.1:$bridgePort/api/events"
 $env:DRIP_LOCAL_PREVIEW = "0"
 
+function Stop-CameraModules {
+    foreach ($moduleName in @("face", "hand")) {
+        $jobs = Get-Job -Name $moduleName -ErrorAction SilentlyContinue
+        if ($jobs) {
+            foreach ($j in $jobs) {
+                try {
+                    Stop-Job -Id $j.Id -ErrorAction SilentlyContinue
+                    Remove-Job -Id $j.Id -ErrorAction SilentlyContinue
+                } catch {
+                    Write-Warning ("Failed to cleanup existing job {0} (Id: {1})" -f $moduleName, $j.Id)
+                }
+            }
+        }
+    }
+
+    $cameraProcesses = Get-CimInstance Win32_Process | Where-Object {
+        $_.Name -eq 'python.exe' -and (
+            $_.CommandLine -match 'main\.py' -or
+            $_.CommandLine -match 'main2\.py'
+        )
+    }
+
+    foreach ($proc in $cameraProcesses) {
+        try {
+            Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop
+            Write-Host ("Stopped stale camera process {0}: {1}" -f $proc.ProcessId, $proc.CommandLine) -ForegroundColor DarkYellow
+        } catch {
+            Write-Warning ("Failed to stop camera process {0}: {1}" -f $proc.ProcessId, $_.Exception.Message)
+        }
+    }
+}
+
 function Start-ModuleJob {
     param (
         [string]$Name,
@@ -74,6 +106,7 @@ function Start-ModuleJob {
 }
 
 Write-Host "Using Python interpreter: $pythonExe" -ForegroundColor DarkGray
+Stop-CameraModules
 $bridgeCmd = "& `"$pythonExe`" -m uvicorn bridge.server:app --host 127.0.0.1 --port $bridgePort"
 $webCmd = "& `"$pythonExe`" -m http.server 8081 --bind 127.0.0.1 --directory web"
 Start-ModuleJob -Name "bridge" -WorkingDir $root -Command $bridgeCmd
@@ -81,6 +114,7 @@ Start-ModuleJob -Name "web" -WorkingDir $root -Command $webCmd
 
 Write-Host "DripMotion stack launched. Open http://127.0.0.1:8081 (bridge: $bridgePort)" -ForegroundColor Green
 Write-Host "Use page controls to start or stop face and hand modules." -ForegroundColor Green
+Write-Host "Camera modules are not started at launch; click the web buttons to enable them." -ForegroundColor Green
 Write-Host "Run Get-Job to inspect jobs, and Stop-Job -Name bridge/web to stop." -ForegroundColor Yellow
 Start-Sleep -Seconds 1
 Start-Process "http://127.0.0.1:8081"

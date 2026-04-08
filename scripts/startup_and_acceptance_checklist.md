@@ -56,6 +56,7 @@ python -m http.server 8081 --bind 127.0.0.1 --directory web
 ## 5) Runtime Control Flow Check
 
 In web page:
+- first confirm system is connected and bridge status is ok
 - click "开启面部交互" and confirm state turns to running
 - click "结束面部交互" and confirm state turns to stopped
 - wait 3-5 seconds before starting hand module (camera release window)

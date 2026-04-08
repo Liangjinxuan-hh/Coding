@@ -64,7 +64,7 @@ def send_command(command, command_sound=None, current_voice_status_ref=None, eve
             if command_sound:
                 command_sound.play()
 
-            publish_command(command, {"status": "ok"})
+            publish_command(command, {"status": "ok", "serial": "connected"})
 
         except Exception as e:
             error_msg = f"命令发送失败: {str(e)[:30]}"
@@ -73,12 +73,15 @@ def send_command(command, command_sound=None, current_voice_status_ref=None, eve
                 current_voice_status_ref[0] = error_msg
             config.serial_status = "串口发送失败"
             config.LAST_COMMAND_SENT[0] = f"失败: {command}"
+            publish_command(command, {"status": "serial_error", "error": str(e)[:80]})
     else:
         msg = "串口未连接，无法发送"
         print(msg)
         if current_voice_status_ref is not None:
             current_voice_status_ref[0] = msg
         config.LAST_COMMAND_SENT[0] = f"失败: {msg}"
+        # 即使没有串口，也把命令发到 bridge，保证网页端控制链路可用。
+        publish_command(command, {"status": "serial_unavailable"})
 
 
 def receive_data():
