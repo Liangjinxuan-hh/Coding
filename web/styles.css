@@ -303,7 +303,9 @@ body::after {
   background: var(--bg-panel);
   box-shadow: var(--shadow-soft);
   width: 240px;
+  height: min(70vh, 560px);
   flex-shrink: 0;
+  overflow: hidden;
 }
 
 .control-btn {
@@ -338,6 +340,9 @@ body::after {
   gap: 12px;
   padding: 0;
   width: 100%;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .ring-controls__header {
