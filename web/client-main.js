@@ -1599,6 +1599,20 @@ buttons.forEach((btn) => {
   });
 });
 
+const ringResetBtn = document.getElementById("ringReset");
+if (ringResetBtn) {
+  ringResetBtn.addEventListener("click", () => {
+    stopMotion("圆环组 - 停止");
+    for (const ring of ["A", "B", "C", "D"]) {
+      stopRingMotion(ring, `Ring${ring} - 停止`);
+    }
+    if (faceExpressionControlEnabled) {
+      setFaceExpressionControlEnabled(false);
+    }
+    resetAllRingsToHome("圆环组 - 已复位");
+  });
+}
+
 const FACE_COMMAND_MAP = {
   LOOK_LEFT: "rotateLeft",
   LOOK_RIGHT: "rotateRight",
