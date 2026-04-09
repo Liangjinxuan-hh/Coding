@@ -65,21 +65,36 @@ def voice_recognition_thread():
 
     recognizer = sr.Recognizer()
 
-    # 检查PyAudio是否可用
+    # 检查 PyAudio 与麦克风可用性，避免把所有错误都误报成“未安装PyAudio”。
+    try:
+        import pyaudio  # noqa: F401
+    except Exception as e:
+        V_VOICE_AVAIL[0] = False
+        V_CURRENT_VOICE_STATUS[0] = "语音未启用（PyAudio不可用）"
+        print(f"语音模块不可用（PyAudio）: {e}")
+        return
+
     try:
         microphone = sr.Microphone()
         sr.Microphone.list_microphone_names()
         source = microphone
+    except OSError as e:
+        V_VOICE_AVAIL[0] = False
+        V_CURRENT_VOICE_STATUS[0] = "语音未启用（麦克风不可用）"
+        print(f"语音模块不可用（麦克风）: {e}")
+        return
     except Exception as e:
         V_VOICE_AVAIL[0] = False
-        V_CURRENT_VOICE_STATUS[0] = "语音未启用（未安装PyAudio）"
-        print(f"语音模块不可用: {e}")
+        V_CURRENT_VOICE_STATUS[0] = "语音未启用（音频初始化失败）"
+        print(f"语音模块不可用（初始化）: {e}")
         return
 
     # 优化识别参数
     recognizer.pause_threshold = 0.5
     recognizer.phrase_threshold = 0.2
     CHINESE_LANGUAGE_MODEL = "zh-CN"
+    online_error_log_cooldown_sec = 8.0
+    last_online_error_log_at = 0.0
 
     WAKE_WORD_RESPONSE = "我在"  # 唤醒反馈
 
@@ -127,8 +142,11 @@ def voice_recognition_thread():
                             print(f"在线识别结果: {text}")
                         except sr.UnknownValueError:
                             pass
-                        except sr.RequestError:
-                            V_LAST_SPEECH[0] = "在线识别失败：网络问题"
+                        except sr.RequestError as online_err:
+                            now_ts = time.time()
+                            if now_ts - last_online_error_log_at > online_error_log_cooldown_sec:
+                                print(f"在线识别不可用（网络异常），继续监听: {online_err}")
+                                last_online_error_log_at = now_ts
 
                     if text:
                         text = text.strip()

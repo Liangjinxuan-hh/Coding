@@ -141,12 +141,14 @@ const faceBindings = {
   serial: document.getElementById("faceSerial"),
   cmd: document.getElementById("faceCommand"),
   stream: document.getElementById("faceStream"),
-  gestures: document.getElementById("faceGestureList"),
+  ringGestures: document.getElementById("faceRingGestureList"),
+  expressionGestures: document.getElementById("faceExpressionGestureList"),
 };
 
 const handBindings = {
   ledGrid: document.getElementById("handLedGrid"),
-  gestures: document.getElementById("handGestureList"),
+  ringGestures: document.getElementById("handRingGestureList"),
+  specialGestures: document.getElementById("handSpecialGestureList"),
   stream: document.getElementById("handStream"),
 };
 
@@ -1642,6 +1644,8 @@ let faceRhythmClockSec = 0;
 
 let handGestureRhythmModeEnabled = false;
 let activeHandSpecialGesture = null;
+let activeLeftHandSpecialGesture = null;
+let activeRightHandSpecialGesture = null;
 let activeHandBehavior = "选环动作模式";
 let handRhythmClockSec = 0;
 
@@ -1989,10 +1993,14 @@ function setHandGestureRhythmModeEnabled(enabled) {
 
   if (handGestureRhythmModeEnabled) {
     activeHandBehavior = "特殊手势节奏模式（禁用选环）";
+    activeLeftHandSpecialGesture = null;
+    activeRightHandSpecialGesture = null;
     activeHandSpecialGesture = null;
     resetAllRingsToHome("特殊手势节奏模式：全环归位完成");
   } else {
     activeHandBehavior = "选环动作模式";
+    activeLeftHandSpecialGesture = null;
+    activeRightHandSpecialGesture = null;
     activeHandSpecialGesture = null;
     resetAllRingsToHome("已退出特殊手势节奏模式");
   }
@@ -2000,9 +2008,17 @@ function setHandGestureRhythmModeEnabled(enabled) {
   updateHandCard({});
 }
 
-function activateHandSpecialGesture(gesture) {
+function activateHandSpecialGesture(gesture, hand = null) {
   if (!gesture || typeof gesture !== "string") return;
-  activeHandSpecialGesture = gesture;
+
+  if (hand === "Left") {
+    activeLeftHandSpecialGesture = gesture;
+  } else if (hand === "Right") {
+    activeRightHandSpecialGesture = gesture;
+  }
+
+  // 用于节奏驱动的有效手势：优先左手，其次右手。
+  activeHandSpecialGesture = activeLeftHandSpecialGesture || activeRightHandSpecialGesture || gesture;
   activeHandBehavior = `特殊手势节奏触发：${HAND_SPECIAL_GESTURE_LABELS[gesture] || gesture}`;
   handRhythmClockSec = 0;
 }
@@ -2032,26 +2048,42 @@ function setFaceExpressionControlEnabled(enabled) {
 }
 
 function renderFaceGestureInfo() {
-  if (!faceBindings.gestures) return;
+  if (!faceBindings.ringGestures && !faceBindings.expressionGestures) return;
   const ringText = faceExpressionControlEnabled ? "全环联动" : (activeFaceRing ? `Ring${activeFaceRing}` : "--");
   const behaviorText = activeFaceBehavior || "等待检测";
   const expressionText = activeFaceExpression || "平静";
   const tempoText = FACE_TEMPO_LABELS[activeFaceTempo] || "正常";
-  const controlText = faceExpressionControlEnabled ? "开启" : "关闭";
-  const modeText = faceExpressionControlEnabled ? "表情节奏模式" : "选环动作模式";
-  faceBindings.gestures.innerHTML = "";
-  [
-    `当前模式：${modeText}`,
+
+  const ringLines = [
+    `模式状态：${faceExpressionControlEnabled ? "关闭" : "开启"}`,
     `当前环：${ringText}`,
-    `当前行为：${behaviorText}`,
+    `当前行为：${faceExpressionControlEnabled ? "表情模式接管" : behaviorText}`,
+  ];
+
+  const expressionLines = [
+    `模式状态：${faceExpressionControlEnabled ? "开启" : "关闭"}`,
     `当前表情：${expressionText}`,
     `当前节奏：${tempoText}`,
-    `表情控制：${controlText}`,
-  ].forEach((line) => {
-    const li = document.createElement("li");
-    li.textContent = line;
-    faceBindings.gestures.appendChild(li);
-  });
+    `当前行为：${behaviorText}`,
+  ];
+
+  if (faceBindings.ringGestures) {
+    faceBindings.ringGestures.innerHTML = "";
+    ringLines.forEach((line) => {
+      const li = document.createElement("li");
+      li.textContent = line;
+      faceBindings.ringGestures.appendChild(li);
+    });
+  }
+
+  if (faceBindings.expressionGestures) {
+    faceBindings.expressionGestures.innerHTML = "";
+    expressionLines.forEach((line) => {
+      const li = document.createElement("li");
+      li.textContent = line;
+      faceBindings.expressionGestures.appendChild(li);
+    });
+  }
 }
 
 const HAND_COMMAND_MAP = {
@@ -2306,9 +2338,32 @@ function handleBridgeEvent(message) {
     if (message.type === "command") {
       const ring = message.payload?.ring || message.payload?.meta?.ring;
       if (message.payload?.action === "specialGesture") {
+        const hand = message.payload?.hand || message.payload?.meta?.hand || null;
+        if (!handGestureRhythmModeEnabled) {
+          activeLeftHandSpecialGesture = null;
+          activeRightHandSpecialGesture = null;
+          activeHandSpecialGesture = null;
+          return;
+        }
         const gesture = message.payload?.gesture || message.payload?.meta?.gesture;
-        if (handGestureRhythmModeEnabled && typeof gesture === "string") {
-          activateHandSpecialGesture(gesture);
+        if (gesture == null) {
+          if (hand === "Left") {
+            activeLeftHandSpecialGesture = null;
+          } else if (hand === "Right") {
+            activeRightHandSpecialGesture = null;
+          } else {
+            activeLeftHandSpecialGesture = null;
+            activeRightHandSpecialGesture = null;
+          }
+
+          activeHandSpecialGesture = activeLeftHandSpecialGesture || activeRightHandSpecialGesture || null;
+          if (!activeHandSpecialGesture) {
+            activeHandBehavior = "特殊手势节奏模式（等待手势）";
+          }
+          return;
+        }
+        if (typeof gesture === "string") {
+          activateHandSpecialGesture(gesture, hand);
         }
         return;
       }
@@ -2563,32 +2618,7 @@ function updateVoiceCard(payload) {
 }
 
 function updateHandCard(payload) {
-  if (!handBindings.gestures) return;
-
-  const normalizeHandGestureLine = (line) => {
-    if (typeof line !== "string") return "";
-    return line
-      .replace(/^Left Ring Gesture:/i, "左手选环手势：")
-      .replace(/^Left Active Ring:/i, "左手当前环：")
-      .replace(/^Left Special Gesture:/i, "特殊手势检测：")
-      .replace(/^Special Gesture:/i, "特殊手势检测：")
-      .replace(/^Right Index Direction:/i, "右手食指标向：")
-      .replace(/\bnot_detected\b/gi, "未检测")
-      .replace(/\bneutral\b/gi, "中立")
-      .replace(/\bnone\b/gi, "无")
-      .replace(/\bLOVE_HEART\b/g, "比心手势")
-      .replace(/\bHEART\b/g, "爱心手势")
-      .replace(/\bVICTORY\b/g, "✌ 手势")
-      .replace(/\bEIGHT\b/g, "8 手势")
-      .replace(/\bSIX\b/g, "6 手势")
-      .replace(/\bOK\b/g, "OK 手势");
-  };
-
-  const shouldHideSpecialGestureLine = (line) => {
-    if (typeof line !== "string") return false;
-    const text = line.trim();
-    return text === "特殊手势检测：未检测" || text === "特殊手势检测：not_detected";
-  };
+  if (!handBindings.ringGestures && !handBindings.specialGestures) return;
 
   const toCnStatus = (value) => {
     const map = {
@@ -2614,53 +2644,72 @@ function updateHandCard(payload) {
     return map[value] || String(value);
   };
 
-  const lines = Array.isArray(payload.gestures)
-    ? payload.gestures.filter((line) => typeof line === "string" && line.trim().length > 0)
-    : [];
-
   const left = payload.left_status || {};
   const right = payload.right_status || {};
 
   const leftGesture = typeof left.ring_gesture === "string" ? left.ring_gesture : "not_detected";
   const leftActive = typeof left.active_ring === "string" ? left.active_ring : "A";
   const leftSpecial = typeof left.special_gesture === "string" ? left.special_gesture : "not_detected";
-  const activeSpecial = typeof left.active_special_gesture === "string" ? left.active_special_gesture : activeHandSpecialGesture;
+  const rightSpecial = typeof right.special_gesture === "string" ? right.special_gesture : "not_detected";
+  if (handGestureRhythmModeEnabled) {
+    const hasLeftActiveSpecialField = Object.prototype.hasOwnProperty.call(left, "active_special_gesture");
+    const hasRightActiveSpecialField = Object.prototype.hasOwnProperty.call(right, "active_special_gesture");
+
+    if (hasLeftActiveSpecialField) {
+      if (typeof left.active_special_gesture === "string" && left.active_special_gesture.length > 0) {
+        activeLeftHandSpecialGesture = left.active_special_gesture;
+      } else {
+        activeLeftHandSpecialGesture = null;
+      }
+    }
+
+    if (hasRightActiveSpecialField) {
+      if (typeof right.active_special_gesture === "string" && right.active_special_gesture.length > 0) {
+        activeRightHandSpecialGesture = right.active_special_gesture;
+      } else {
+        activeRightHandSpecialGesture = null;
+      }
+    }
+
+    activeHandSpecialGesture = activeLeftHandSpecialGesture || activeRightHandSpecialGesture || null;
+  } else {
+    activeLeftHandSpecialGesture = null;
+    activeRightHandSpecialGesture = null;
+    activeHandSpecialGesture = null;
+  }
   const rightDirection = typeof right.index_direction === "string" ? right.index_direction : "not_detected";
 
-  if (typeof activeSpecial === "string" && activeSpecial.length > 0) {
-    activeHandSpecialGesture = activeSpecial;
-  }
-
-  const modeText = handGestureRhythmModeEnabled ? "特殊手势节奏模式" : "选环动作模式";
   const behaviorText = activeHandBehavior || "等待检测";
-  const specialText = activeHandSpecialGesture ? (HAND_SPECIAL_GESTURE_LABELS[activeHandSpecialGesture] || activeHandSpecialGesture) : "--";
-
-  const fallbackLines = [
+  const ringLines = [
     `左手选环手势：${toCnStatus(leftGesture)}`,
     `左手当前环：${toCnStatus(leftActive)}`,
     `右手食指标向：${toCnStatus(rightDirection)}`,
   ];
 
-  if (!["not_detected", "none", "--"].includes(String(leftSpecial))) {
-    fallbackLines.splice(2, 0, `特殊手势检测：${toCnStatus(leftSpecial)}`);
-  }
-
-  const detailLines = lines.length > 0
-    ? lines.slice(-4).map(normalizeHandGestureLine).filter((line) => !shouldHideSpecialGestureLine(line))
-    : fallbackLines;
-  const renderLines = [
-    `当前模式：${modeText}`,
-    `当前特殊手势：${specialText}`,
+  const specialLines = [
+    `模式状态：${handGestureRhythmModeEnabled ? "开启" : "关闭"}`,
+    `左手特殊手势：${toCnStatus(leftSpecial)}`,
+    `右手特殊手势：${toCnStatus(rightSpecial)}`,
     `当前行为：${behaviorText}`,
-    ...detailLines,
   ];
 
-  handBindings.gestures.innerHTML = "";
-  renderLines.forEach((line) => {
-    const li = document.createElement("li");
-    li.textContent = line;
-    handBindings.gestures.appendChild(li);
-  });
+  if (handBindings.ringGestures) {
+    handBindings.ringGestures.innerHTML = "";
+    ringLines.forEach((line) => {
+      const li = document.createElement("li");
+      li.textContent = line;
+      handBindings.ringGestures.appendChild(li);
+    });
+  }
+
+  if (handBindings.specialGestures) {
+    handBindings.specialGestures.innerHTML = "";
+    specialLines.forEach((line) => {
+      const li = document.createElement("li");
+      li.textContent = line;
+      handBindings.specialGestures.appendChild(li);
+    });
+  }
 }
 
 function renderLedColumns(payload) {

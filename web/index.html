@@ -109,13 +109,25 @@
           <div class="video-wrapper">
             <img id="faceStream" class="insight-video" alt="面部摄像头画面" />
           </div>
-          <ul id="faceGestureList" class="gesture-log" aria-label="面部识别结果">
-            <li>当前环：--</li>
-            <li>当前行为：等待检测...</li>
-            <li>当前表情：平静</li>
-            <li>当前节奏：正常</li>
-            <li>表情控制：关闭</li>
-          </ul>
+          <div class="hand-mode-panels" aria-label="面部识别结果">
+            <section class="hand-mode-panel" aria-label="面部选环模式结果">
+              <h3 class="hand-mode-panel__title">选环模式</h3>
+              <ul id="faceRingGestureList" class="gesture-log">
+                <li>模式状态：开启</li>
+                <li>当前环：--</li>
+                <li>当前行为：等待检测...</li>
+              </ul>
+            </section>
+            <section class="hand-mode-panel" aria-label="面部表情模式结果">
+              <h3 class="hand-mode-panel__title">表情模式</h3>
+              <ul id="faceExpressionGestureList" class="gesture-log">
+                <li>模式状态：关闭</li>
+                <li>当前表情：平静</li>
+                <li>当前节奏：正常</li>
+                <li>当前行为：等待检测...</li>
+              </ul>
+            </section>
+          </div>
           <div class="module-inline" aria-label="面部交互控制">
             <div class="module-inline__buttons module-inline__buttons--face">
               <button id="faceTempoToggle" class="module-btn">表情控制：关闭</button>
@@ -135,11 +147,25 @@
           <div class="video-wrapper">
             <img id="handStream" class="insight-video" alt="手势摄像头画面" />
           </div>
-          <ul id="handGestureList" class="gesture-log" aria-label="手势识别结果">
-            <li>当前模式：选环动作模式</li>
-            <li>当前特殊手势：--</li>
-            <li>当前行为：等待检测...</li>
-          </ul>
+          <div class="hand-mode-panels" aria-label="手势识别结果">
+            <section class="hand-mode-panel" aria-label="选环模式结果">
+              <h3 class="hand-mode-panel__title">选环模式</h3>
+              <ul id="handRingGestureList" class="gesture-log">
+                <li>左手选环手势：未检测</li>
+                <li>左手当前环：A</li>
+                <li>右手食指标向：未检测</li>
+              </ul>
+            </section>
+            <section class="hand-mode-panel" aria-label="特殊手势模式结果">
+              <h3 class="hand-mode-panel__title">特殊手势模式</h3>
+              <ul id="handSpecialGestureList" class="gesture-log">
+                <li>模式状态：关闭</li>
+                <li>左手特殊手势：--</li>
+                <li>右手特殊手势：--</li>
+                <li>当前行为：等待检测...</li>
+              </ul>
+            </section>
+          </div>
           <div class="module-inline" aria-label="手势交互控制">
             <div class="module-inline__buttons module-inline__buttons--face">
               <button id="handGestureModeToggle" class="module-btn module-btn--stop" disabled>特殊手势：关闭</button>
