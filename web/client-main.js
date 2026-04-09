@@ -124,6 +124,7 @@ const faceStopBtn = document.getElementById("faceStop");
 const faceTempoToggleBtn = document.getElementById("faceTempoToggle");
 const handStartBtn = document.getElementById("handStart");
 const handStopBtn = document.getElementById("handStop");
+const handGestureModeToggleBtn = document.getElementById("handGestureModeToggle");
 const voiceStartBtn = document.getElementById("voiceStart");
 const voiceStopBtn = document.getElementById("voiceStop");
 const partPrevBtn = document.getElementById("partPrev");
@@ -139,13 +140,11 @@ const faceBindings = {
   mouth: document.getElementById("faceMouth"),
   serial: document.getElementById("faceSerial"),
   cmd: document.getElementById("faceCommand"),
-  mode: document.getElementById("faceMode"),
   stream: document.getElementById("faceStream"),
   gestures: document.getElementById("faceGestureList"),
 };
 
 const handBindings = {
-  badge: document.getElementById("handLastAction"),
   ledGrid: document.getElementById("handLedGrid"),
   gestures: document.getElementById("handGestureList"),
   stream: document.getElementById("handStream"),
@@ -1527,6 +1526,8 @@ function stepPhysics(delta) {
   // === PER-RING MOTION (new independent control) ===
   if (faceExpressionControlEnabled) {
     applyExpressionRhythmToAllRings(delta);
+  } else if (handGestureRhythmModeEnabled) {
+    applyHandGestureRhythmToAllRings(delta);
   } else {
     for (const ring of ["A", "B", "C", "D"]) {
       const state = ringStates[ring];
@@ -1638,6 +1639,11 @@ let activeFaceExpression = "平静";
 let activeFaceTempo = "normal";
 let faceExpressionControlEnabled = false;
 let faceRhythmClockSec = 0;
+
+let handGestureRhythmModeEnabled = false;
+let activeHandSpecialGesture = null;
+let activeHandBehavior = "选环动作模式";
+let handRhythmClockSec = 0;
 
 renderLoop();
 
@@ -1861,6 +1867,146 @@ function applyExpressionRhythmToAllRings(delta) {
   }
 }
 
+const HAND_SPECIAL_GESTURE_LABELS = {
+  OK: "OK 手势",
+  VICTORY: "✌ 手势",
+  LOVE_HEART: "比心手势",
+  HEART: "爱心手势",
+  SIX: "6 手势",
+  EIGHT: "8 手势",
+};
+
+const HAND_SPECIAL_GESTURE_PROFILE_MAP = {
+  OK: "ok",
+  VICTORY: "victory",
+  LOVE_HEART: "loveHeart",
+  HEART: "heart",
+  SIX: "six",
+  EIGHT: "eight",
+};
+
+function getHandRhythmProfileByGesture(gesture) {
+  const profileKey = HAND_SPECIAL_GESTURE_PROFILE_MAP[gesture] || "default";
+  const map = {
+    default: {
+      speed: 1.2,
+      amp: 0.42,
+      rotateDeg: 18,
+      phases: { A: 0.0, B: 0.9, C: 1.8, D: 2.7 },
+      spinDir: { A: 1, B: -1, C: 1, D: -1 },
+      pairWeight: 0.25,
+    },
+    ok: {
+      speed: 1.55,
+      amp: 0.50,
+      rotateDeg: 24,
+      phases: { A: 0.0, B: 1.2, C: 2.4, D: 3.6 },
+      spinDir: { A: 1, B: 1, C: -1, D: -1 },
+      pairWeight: 0.35,
+    },
+    victory: {
+      speed: 2.1,
+      amp: 0.62,
+      rotateDeg: 34,
+      phases: { A: 0.0, B: 0.0, C: 1.8, D: 1.8 },
+      spinDir: { A: 1, B: 1, C: -1, D: -1 },
+      pairWeight: 0.5,
+    },
+    loveHeart: {
+      speed: 1.35,
+      amp: 0.48,
+      rotateDeg: 16,
+      phases: { A: 0.0, B: 1.6, C: 3.2, D: 4.8 },
+      spinDir: { A: 1, B: -1, C: -1, D: 1 },
+      pairWeight: 0.3,
+    },
+    heart: {
+      speed: 1.25,
+      amp: 0.46,
+      rotateDeg: 14,
+      phases: { A: 0.0, B: 2.1, C: 4.2, D: 6.3 },
+      spinDir: { A: 1, B: 1, C: 1, D: 1 },
+      pairWeight: 0.22,
+    },
+    six: {
+      speed: 1.95,
+      amp: 0.56,
+      rotateDeg: 32,
+      phases: { A: 0.0, B: 2.4, C: 0.8, D: 3.2 },
+      spinDir: { A: 1, B: -1, C: 1, D: -1 },
+      pairWeight: 0.45,
+    },
+    eight: {
+      speed: 2.35,
+      amp: 0.64,
+      rotateDeg: 38,
+      phases: { A: 0.0, B: 1.57, C: 3.14, D: 4.71 },
+      spinDir: { A: 1, B: 1, C: -1, D: -1 },
+      pairWeight: 0.55,
+    },
+  };
+  return map[profileKey] || map.default;
+}
+
+function applyHandGestureRhythmToAllRings(delta) {
+  handRhythmClockSec += delta;
+  const profile = getHandRhythmProfileByGesture(activeHandSpecialGesture);
+  const t = handRhythmClockSec * profile.speed;
+  const pairOsc = Math.sin(t * 2.0);
+
+  for (const ring of ["A", "B", "C", "D"]) {
+    const state = ringStates[ring];
+    if (!state) continue;
+    const phase = profile.phases[ring] ?? 0;
+    const base = Math.sin(t + phase);
+    const pulse = Math.max(0, Math.sin(t * 2.5 + phase * 0.7));
+    const pair = (ring === "A" || ring === "C") ? pairOsc : -pairOsc;
+
+    const ringRange = Math.min(Math.abs(state.limits.min), Math.abs(state.limits.max));
+    const usableRange = Math.max(0.03, ringRange * 0.9);
+    const mixedWave = base * (1 - profile.pairWeight) + pair * profile.pairWeight + pulse * 0.22;
+
+    state.moveDir = 0;
+    state.rotateDir = 0;
+    state.heightOffset = clamp(mixedWave * profile.amp * usableRange, state.limits.min, state.limits.max);
+
+    const spin = profile.spinDir[ring] ?? 1;
+    const rotateSpeedRad = THREE.MathUtils.degToRad(profile.rotateDeg) * (0.7 + pulse * 0.6);
+    state.rotationOffset += spin * rotateSpeedRad * delta;
+    syncRingMotionBinding(ring);
+  }
+}
+
+function setHandGestureRhythmModeEnabled(enabled) {
+  handGestureRhythmModeEnabled = Boolean(enabled);
+  handRhythmClockSec = 0;
+
+  if (handGestureModeToggleBtn) {
+    handGestureModeToggleBtn.textContent = handGestureRhythmModeEnabled ? "特殊手势：开启" : "特殊手势：关闭";
+    handGestureModeToggleBtn.classList.toggle("module-btn--stop", !handGestureRhythmModeEnabled);
+    handGestureModeToggleBtn.classList.toggle("module-btn--active", handGestureRhythmModeEnabled);
+  }
+
+  if (handGestureRhythmModeEnabled) {
+    activeHandBehavior = "特殊手势节奏模式（禁用选环）";
+    activeHandSpecialGesture = null;
+    resetAllRingsToHome("特殊手势节奏模式：全环归位完成");
+  } else {
+    activeHandBehavior = "选环动作模式";
+    activeHandSpecialGesture = null;
+    resetAllRingsToHome("已退出特殊手势节奏模式");
+  }
+
+  updateHandCard({});
+}
+
+function activateHandSpecialGesture(gesture) {
+  if (!gesture || typeof gesture !== "string") return;
+  activeHandSpecialGesture = gesture;
+  activeHandBehavior = `特殊手势节奏触发：${HAND_SPECIAL_GESTURE_LABELS[gesture] || gesture}`;
+  handRhythmClockSec = 0;
+}
+
 function setFaceExpressionControlEnabled(enabled) {
   faceExpressionControlEnabled = Boolean(enabled);
   faceRhythmClockSec = 0;
@@ -1952,6 +2098,9 @@ function setModuleState(target, running, error = false) {
   if (target === "face" && faceTempoToggleBtn) {
     faceTempoToggleBtn.disabled = !running;
   }
+  if (target === "hand" && handGestureModeToggleBtn) {
+    handGestureModeToggleBtn.disabled = !running;
+  }
   setStreamVisibility(target, running);
 
   if (target === "face" && !running) {
@@ -1960,6 +2109,13 @@ function setModuleState(target, running, error = false) {
     activeFaceTempo = "normal";
     setFaceExpressionControlEnabled(false);
     renderFaceGestureInfo();
+  }
+
+  if (target === "hand" && !running) {
+    setHandGestureRhythmModeEnabled(false);
+    activeHandBehavior = "等待检测";
+    activeHandSpecialGesture = null;
+    updateHandCard({});
   }
 }
 
@@ -2149,19 +2305,27 @@ function handleBridgeEvent(message) {
     }
     if (message.type === "command") {
       const ring = message.payload?.ring || message.payload?.meta?.ring;
-      if (message.payload?.action === "selectRing") {
-        if (handBindings.badge) {
-          handBindings.badge.textContent = ring ? `手势选环 → Ring${ring}` : "手势选环";
+      if (message.payload?.action === "specialGesture") {
+        const gesture = message.payload?.gesture || message.payload?.meta?.gesture;
+        if (handGestureRhythmModeEnabled && typeof gesture === "string") {
+          activateHandSpecialGesture(gesture);
         }
         return;
       }
+
+      if (message.payload?.action === "selectRing") {
+        if (handGestureRhythmModeEnabled) {
+          return;
+        }
+        return;
+      }
+
+      if (handGestureRhythmModeEnabled) {
+        return;
+      }
+
       const next = HAND_COMMAND_MAP[message.payload?.action];
       if (next) {
-        if (handBindings.badge) {
-          handBindings.badge.textContent = ring
-            ? `手势 → Ring${ring}:${message.payload?.action}`
-            : `手势 → ${message.payload?.action}`;
-        }
         if (ring && ["A", "B", "C", "D"].includes(ring)) {
           applyRingCommand(ring, next);
         } else {
@@ -2371,10 +2535,6 @@ function updateFaceCard(payload) {
     activeFaceTempo = nextTempo;
     applyActiveFaceTempo();
   }
-  if (faceBindings.mode) {
-    faceBindings.mode.textContent = payload.calibrated ? "已校准" : "校准中";
-    faceBindings.mode.classList.toggle("alert", !payload.calibrated);
-  }
   renderFaceGestureInfo();
 }
 
@@ -2405,6 +2565,55 @@ function updateVoiceCard(payload) {
 function updateHandCard(payload) {
   if (!handBindings.gestures) return;
 
+  const normalizeHandGestureLine = (line) => {
+    if (typeof line !== "string") return "";
+    return line
+      .replace(/^Left Ring Gesture:/i, "左手选环手势：")
+      .replace(/^Left Active Ring:/i, "左手当前环：")
+      .replace(/^Left Special Gesture:/i, "特殊手势检测：")
+      .replace(/^Special Gesture:/i, "特殊手势检测：")
+      .replace(/^Right Index Direction:/i, "右手食指标向：")
+      .replace(/\bnot_detected\b/gi, "未检测")
+      .replace(/\bneutral\b/gi, "中立")
+      .replace(/\bnone\b/gi, "无")
+      .replace(/\bLOVE_HEART\b/g, "比心手势")
+      .replace(/\bHEART\b/g, "爱心手势")
+      .replace(/\bVICTORY\b/g, "✌ 手势")
+      .replace(/\bEIGHT\b/g, "8 手势")
+      .replace(/\bSIX\b/g, "6 手势")
+      .replace(/\bOK\b/g, "OK 手势");
+  };
+
+  const shouldHideSpecialGestureLine = (line) => {
+    if (typeof line !== "string") return false;
+    const text = line.trim();
+    return text === "特殊手势检测：未检测" || text === "特殊手势检测：not_detected";
+  };
+
+  const toCnStatus = (value) => {
+    const map = {
+      none: "无",
+      not_detected: "未检测",
+      neutral: "中立",
+      up: "上",
+      down: "下",
+      left: "左",
+      right: "右",
+      A: "A",
+      B: "B",
+      C: "C",
+      D: "D",
+      LOVE_HEART: "比心手势",
+      HEART: "爱心手势",
+      VICTORY: "✌ 手势",
+      EIGHT: "8 手势",
+      SIX: "6 手势",
+      OK: "OK 手势",
+    };
+    if (value == null) return "--";
+    return map[value] || String(value);
+  };
+
   const lines = Array.isArray(payload.gestures)
     ? payload.gestures.filter((line) => typeof line === "string" && line.trim().length > 0)
     : [];
@@ -2414,15 +2623,37 @@ function updateHandCard(payload) {
 
   const leftGesture = typeof left.ring_gesture === "string" ? left.ring_gesture : "not_detected";
   const leftActive = typeof left.active_ring === "string" ? left.active_ring : "A";
+  const leftSpecial = typeof left.special_gesture === "string" ? left.special_gesture : "not_detected";
+  const activeSpecial = typeof left.active_special_gesture === "string" ? left.active_special_gesture : activeHandSpecialGesture;
   const rightDirection = typeof right.index_direction === "string" ? right.index_direction : "not_detected";
 
+  if (typeof activeSpecial === "string" && activeSpecial.length > 0) {
+    activeHandSpecialGesture = activeSpecial;
+  }
+
+  const modeText = handGestureRhythmModeEnabled ? "特殊手势节奏模式" : "选环动作模式";
+  const behaviorText = activeHandBehavior || "等待检测";
+  const specialText = activeHandSpecialGesture ? (HAND_SPECIAL_GESTURE_LABELS[activeHandSpecialGesture] || activeHandSpecialGesture) : "--";
+
   const fallbackLines = [
-    `Left Ring Gesture: ${leftGesture}`,
-    `Left Active Ring: ${leftActive}`,
-    `Right Index Direction: ${rightDirection}`,
+    `左手选环手势：${toCnStatus(leftGesture)}`,
+    `左手当前环：${toCnStatus(leftActive)}`,
+    `右手食指标向：${toCnStatus(rightDirection)}`,
   ];
 
-  const renderLines = lines.length > 0 ? lines.slice(-4) : fallbackLines;
+  if (!["not_detected", "none", "--"].includes(String(leftSpecial))) {
+    fallbackLines.splice(2, 0, `特殊手势检测：${toCnStatus(leftSpecial)}`);
+  }
+
+  const detailLines = lines.length > 0
+    ? lines.slice(-4).map(normalizeHandGestureLine).filter((line) => !shouldHideSpecialGestureLine(line))
+    : fallbackLines;
+  const renderLines = [
+    `当前模式：${modeText}`,
+    `当前特殊手势：${specialText}`,
+    `当前行为：${behaviorText}`,
+    ...detailLines,
+  ];
 
   handBindings.gestures.innerHTML = "";
   renderLines.forEach((line) => {
@@ -2461,9 +2692,6 @@ function renderLedColumns(payload) {
 
 function relayExternalCommand(source, mappedCommand, rawPayload) {
   applyCommand(mappedCommand);
-  if (source === "hand" && handBindings.badge) {
-    handBindings.badge.textContent = `手势 → ${rawPayload?.action ?? mappedCommand}`;
-  }
   if (source === "face" && faceBindings.cmd && rawPayload?.command) {
     faceBindings.cmd.textContent = rawPayload.command;
   }
@@ -2474,6 +2702,11 @@ if (faceStopBtn) faceStopBtn.addEventListener("click", () => callModuleControl("
 if (faceTempoToggleBtn) {
   faceTempoToggleBtn.addEventListener("click", () => {
     setFaceExpressionControlEnabled(!faceExpressionControlEnabled);
+  });
+}
+if (handGestureModeToggleBtn) {
+  handGestureModeToggleBtn.addEventListener("click", () => {
+    setHandGestureRhythmModeEnabled(!handGestureRhythmModeEnabled);
   });
 }
 if (handStartBtn) handStartBtn.addEventListener("click", () => callModuleControl("hand", "start"));

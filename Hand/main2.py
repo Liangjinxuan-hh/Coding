@@ -67,7 +67,8 @@ LED_COLORS = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (255, 255, 0), (0, 255, 255
 hand_data = {
     'Left': {'last_wrist_y': None, 'last_wrist_x': None, 'last_detection_time': time.time(),
              'last_open_time': 0, 'last_closed_time': 0, 'last_v_sign_time': 0, 'last_motion_emit': 0,
-             'last_ring_select_time': 0, 'active_ring': 'A', 'ring_candidate': None, 'ring_candidate_count': 0},
+             'last_ring_select_time': 0, 'active_ring': 'A', 'ring_candidate': None, 'ring_candidate_count': 0,
+             'special_candidate': None, 'special_candidate_count': 0, 'last_special_emit': 0, 'active_special_gesture': None},
     'Right': {'last_wrist_y': None, 'last_wrist_x': None, 'last_detection_time': time.time(),
               'last_open_time': 0, 'last_closed_time': 0, 'last_v_sign_time': 0, 'last_motion_emit': 0,
               'last_ring_select_time': 0, 'active_ring': 'A', 'ring_candidate': None, 'ring_candidate_count': 0,
@@ -82,6 +83,7 @@ VERTICAL_SPEED_THRESHOLD = 50
 DEBOUNCE_TIME = 0.5
 HAND_COMMAND_COOLDOWN = 0.4
 RING_SELECT_COOLDOWN = 0.5
+SPECIAL_GESTURE_COOLDOWN = 0.7
 
 THUMB_TIP = 4
 INDEX_FINGER_TIP = 8
@@ -277,6 +279,98 @@ def detect_ring_gesture(landmarks):
     return best_ring
 
 
+def detect_special_gesture(landmarks):
+    """识别特殊手势：OK、比心、爱心、6、8、✌。"""
+    wrist = landmarks[WRIST]
+    index_mcp = landmarks[INDEX_FINGER_MCP]
+    middle_mcp = landmarks[9]
+    ring_mcp = landmarks[13]
+    pinky_mcp = landmarks[17]
+    thumb_tip = landmarks[THUMB_TIP]
+    index_tip = landmarks[INDEX_FINGER_TIP]
+
+    palm_scale = max(distance_2d(index_mcp, wrist), 1e-4)
+
+    index_extended = is_finger_extended(landmarks, INDEX_FINGER_TIP, INDEX_FINGER_PIP)
+    middle_extended = is_finger_extended(landmarks, MIDDLE_FINGER_TIP, MIDDLE_FINGER_PIP)
+    ring_extended = is_finger_extended(landmarks, RING_FINGER_TIP, RING_FINGER_PIP)
+    pinky_extended = is_finger_extended(landmarks, PINKY_FINGER_TIP, PINKY_FINGER_PIP)
+
+    middle_bent = not middle_extended
+    ring_bent = not ring_extended
+    pinky_bent = not pinky_extended
+
+    thumb_index_ratio = distance_2d(thumb_tip, index_tip) / palm_scale
+    thumb_middle_ratio = distance_2d(thumb_tip, middle_mcp) / palm_scale
+    thumb_pinky_ratio = distance_2d(thumb_tip, landmarks[PINKY_FINGER_TIP]) / palm_scale
+    thumb_wrist_ratio = distance_2d(thumb_tip, wrist) / palm_scale
+    finger_spread_ratio = distance_2d(landmarks[INDEX_FINGER_TIP], landmarks[PINKY_FINGER_TIP]) / palm_scale
+    index_length_ratio = distance_2d(index_tip, index_mcp) / palm_scale
+
+    thumb_extended = thumb_wrist_ratio > 0.55 and thumb_middle_ratio > 0.50
+
+    def sat(v, lo, hi):
+        if v <= lo:
+            return 0.0
+        if v >= hi:
+            return 1.0
+        return (v - lo) / (hi - lo)
+
+    def sat_inv(v, lo, hi):
+        return 1.0 - sat(v, lo, hi)
+
+    # ✌ 手势（V）：食指+中指伸直，无名指+小拇指弯曲
+    if is_victory_sign(landmarks):
+        return "VICTORY"
+
+    # 6 手势（shaka）：拇指+小拇指伸直，其余弯曲
+    if thumb_extended and pinky_extended and (not index_extended) and middle_bent and ring_bent:
+        return "SIX"
+
+    # OK：拇指和食指捏合，另外三指伸直
+    if thumb_index_ratio < 0.28 and middle_extended and ring_extended and pinky_extended:
+        return "OK"
+
+    # 比心/8 手势采用竞争打分，减少临界姿态误判。
+    folded_three = (1 if middle_bent else 0) + (1 if ring_bent else 0) + (1 if pinky_bent else 0)
+    folded_three_score = folded_three / 3.0
+
+    love_score = (
+        sat_inv(thumb_index_ratio, 0.22, 0.52) * 0.42
+        + sat_inv(thumb_middle_ratio, 0.52, 0.98) * 0.18
+        + sat_inv(finger_spread_ratio, 0.72, 1.52) * 0.18
+        + folded_three_score * 0.18
+        + sat_inv(index_length_ratio, 0.98, 1.38) * 0.04
+    )
+
+    eight_score = (
+        sat(thumb_index_ratio, 0.36, 0.82) * 0.34
+        + sat(index_length_ratio, 0.90, 1.42) * 0.20
+        + (1.0 if thumb_extended else 0.0) * 0.16
+        + (1.0 if index_extended else 0.0) * 0.14
+        + folded_three_score * 0.10
+        + sat(finger_spread_ratio, 0.46, 1.20) * 0.06
+    )
+
+    # 比心优先：只要捏合特征明显且领先 8 手势分数，就判为比心。
+    if love_score >= 0.56 and love_score >= eight_score + 0.08:
+        return "LOVE_HEART"
+
+    # 8 手势需要“拇指食指分离 + 食指较伸直 + 其余三指收拢”。
+    if eight_score >= 0.60 and thumb_index_ratio > 0.34:
+        return "EIGHT"
+
+    # 爱心（单手近似）：拇指与食指靠拢，中指辅助展开，无名指小指收拢
+    if thumb_index_ratio < 0.36 and index_extended and middle_extended and ring_bent and pinky_bent and finger_spread_ratio < 1.5:
+        return "HEART"
+
+    # 兜底：拇指靠近小指、并且食指中指不同时伸直，避免误判
+    if thumb_pinky_ratio < 0.38 and (not (index_extended and middle_extended)):
+        return "HEART"
+
+    return None
+
+
 def get_b_debug_metrics(landmarks):
     wrist = landmarks[WRIST]
     index_mcp = landmarks[INDEX_FINGER_MCP]
@@ -415,6 +509,7 @@ def main():
             left_seen = False
             right_seen = False
             left_ring_detected = None
+            left_special_detected = None
             right_direction_detected = None
 
             # 重置选中状态
@@ -451,7 +546,9 @@ def main():
                         left_seen = True
                         bdbg = get_b_debug_metrics(hand_landmarks)
                         ring_letter = detect_ring_gesture(hand_landmarks)
+                        special_gesture = detect_special_gesture(hand_landmarks)
                         left_ring_detected = ring_letter
+                        left_special_detected = special_gesture
                         if ring_letter:
                             if current_hand_history.get('ring_candidate') == ring_letter:
                                 current_hand_history['ring_candidate_count'] = current_hand_history.get('ring_candidate_count', 0) + 1
@@ -470,6 +567,25 @@ def main():
                         else:
                             current_hand_history['ring_candidate'] = None
                             current_hand_history['ring_candidate_count'] = 0
+
+                        if special_gesture:
+                            if current_hand_history.get('special_candidate') == special_gesture:
+                                current_hand_history['special_candidate_count'] = current_hand_history.get('special_candidate_count', 0) + 1
+                            else:
+                                current_hand_history['special_candidate'] = special_gesture
+                                current_hand_history['special_candidate_count'] = 1
+
+                            if (
+                                current_hand_history['special_candidate_count'] >= 2
+                                and current_loop_time - current_hand_history.get('last_special_emit', 0) > SPECIAL_GESTURE_COOLDOWN
+                            ):
+                                current_hand_history['active_special_gesture'] = special_gesture
+                                current_hand_history['last_special_emit'] = current_loop_time
+                                current_hand_history['special_candidate_count'] = 0
+                                publish_hand_command("specialGesture", {"hand": hand_label, "gesture": special_gesture})
+                        else:
+                            current_hand_history['special_candidate'] = None
+                            current_hand_history['special_candidate_count'] = 0
 
                         active_ring = current_hand_history.get('active_ring') or 'A'
 
@@ -490,7 +606,31 @@ def main():
             right_direction = next((s.get("direction") for s in frame_hand_states if s.get("hand_label") == "Right"), None)
             left_active_ring = hand_data['Left'].get('active_ring') or 'A'
             left_detect_text = left_ring_detected if left_ring_detected else ('none' if left_seen else 'not_detected')
+            left_special_active = hand_data['Left'].get('active_special_gesture')
+            left_special_text = left_special_detected if left_special_detected else ('none' if left_seen else 'not_detected')
             right_detect_text = right_direction_detected if right_direction_detected else ('neutral' if right_seen else 'not_detected')
+
+            ring_label_map = {
+                'A': 'A',
+                'B': 'B',
+                'C': 'C',
+                'D': 'D',
+                'none': '无',
+                'not_detected': '未检测',
+            }
+            direction_label_map = {
+                'up': '上',
+                'down': '下',
+                'left': '左',
+                'right': '右',
+                'neutral': '中立',
+                'not_detected': '未检测',
+            }
+
+            left_detect_label = ring_label_map.get(left_detect_text, str(left_detect_text))
+            left_active_label = ring_label_map.get(left_active_ring, str(left_active_ring))
+            left_special_label = ring_label_map.get(left_special_text, str(left_special_text))
+            right_detect_label = direction_label_map.get(right_detect_text, str(right_detect_text))
 
             direction_to_action = {
                 "up": "moveUp",
@@ -527,19 +667,14 @@ def main():
                     right_history['last_direction_emit'] = current_loop_time
 
             # 每帧固定输出左右手结果，避免只显示单侧导致误解。
-            gesture_display_info.append(f"Left Ring Gesture: {left_detect_text}")
-            gesture_display_info.append(f"Left Active Ring: {left_active_ring}")
-            gesture_display_info.append(f"Right Index Direction: {right_detect_text}")
+            gesture_display_info.append(f"左手选环手势：{left_detect_label}")
+            gesture_display_info.append(f"左手当前环：{left_active_label}")
+            gesture_display_info.append(f"特殊手势检测：{left_special_label}")
+            gesture_display_info.append(f"右手食指标向：{right_detect_label}")
 
             # --- 5. 模拟 LED 显示 (修改) ---
             draw_led_column(frame, led_column_left, 50, "Left Column (L-Hand)")
             draw_led_column(frame, led_column_right, W - 150, "Right Column (R-Hand)")
-
-            # 显示手势信息
-            y_offset = 30
-            for line in gesture_display_info:
-                cv2.putText(frame, line, (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                y_offset += 25
 
             if LOCAL_PREVIEW:
                 cv2.imshow('Hand Gesture LED Control', frame)
@@ -558,6 +693,8 @@ def main():
                 "left_status": {
                     "ring_gesture": left_detect_text,
                     "active_ring": left_active_ring,
+                    "special_gesture": left_special_text,
+                    "active_special_gesture": left_special_active,
                     "seen": left_seen,
                 },
                 "right_status": {

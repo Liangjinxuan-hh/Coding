@@ -105,6 +105,21 @@ body::after {
   letter-spacing: 0.03em;
 }
 
+.hero__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: nowrap;
+}
+
+.hero__title-row h1 {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
 .hero p {
   margin: 0;
   max-width: 720px;
@@ -114,7 +129,8 @@ body::after {
 
 .bridge-status {
   display: inline-flex;
-  margin-top: 16px;
+  flex: 0 0 auto;
+  white-space: nowrap;
   padding: 6px 14px;
   border-radius: 999px;
   border: 1px solid var(--border-soft);
@@ -703,6 +719,22 @@ body::after {
 
   .module-control__buttons {
     grid-template-columns: 1fr;
+  }
+
+  .hero__title-row {
+    flex-wrap: nowrap;
+    gap: 10px;
+  }
+
+  .hero__title-row h1 {
+    white-space: nowrap;
+    font-size: clamp(1.5rem, 6.2vw, 2.1rem);
+  }
+
+  .bridge-status {
+    padding: 5px 10px;
+    font-size: 0.78rem;
+    letter-spacing: 0.02em;
   }
 
   .module-inline__buttons--face {
