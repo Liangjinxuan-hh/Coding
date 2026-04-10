@@ -1,16 +1,16 @@
 # 滴动仪智能交互系统
 
-面向滴定实验的人机协同控制项目，融合手势/人脸识别、语音交互、Web 控制台、Unity 机械臂可视化以及硬件串口桥接，旨在通过多模态输入实现滴定仪的智能操控。
+面向滴定实验的人机协同控制项目，融合手势/人脸识别、语音交互与 Web 控制台（可选扩展 Unity 可视化），旨在通过多模态输入实现滴定仪的智能操控。
 
 ## 功能概览
 
 | 模块 | 功能 | 入口 |
 | --- | --- | --- |
 | Hand | MediaPipe 手势识别、事件桥接 | `Hand/main2.py` |
-| Face | 人脸/语音分析、串口命令发送、UI 反馈 | `Face/PythonProject/main.py` |
+| Face | 人脸/语音分析、交互状态反馈 | `Face/PythonProject/main.py` |
 | Web | Three.js 交互面板、CommandHub 集成 | `web/index.html` (`web/README.md`) |
-| Unity | 机械臂仿真控制脚本 | `Unity/*.cs` (`Unity/README_UnitySetup.md`) |
-| Bridge | WebSocket/UDP/串口事件中枢 | `bridge/server.py` |
+| Unity（可选） | 机械臂仿真控制脚本 | `Unity/*.cs` (`Unity/README_UnitySetup.md`) |
+| Bridge | HTTP/WebSocket 事件中枢 | `bridge/server.py` |
 | Scripts | 组合启动脚本等 | `scripts/start_dripmotion.ps1` |
 
 ## 架构与流程图
@@ -166,9 +166,9 @@ Web 页面上的"表情控制"按钮有以下三种状态：
 ```
 .
 ├─web/                 # 前端控制面板（含 README）
-├─Unity/               # Unity 场景脚本与配置说明
+├─Unity/               # Unity 场景脚本与配置说明（可选扩展）
 ├─Hand/                # 手势识别 & Web 桥接
-├─Face/                # 人脸/语音 & 硬件串口
+├─Face/                # 人脸/语音交互模块
 ├─bridge/              # 事件桥接服务
 ├─scripts/             # Powershell/批处理脚本
 └─README.md            # 当前文件
@@ -179,8 +179,7 @@ Web 页面上的"表情控制"按钮有以下三种状态：
 - Windows 10/11，PowerShell 7+
 - Python 3.10+
 - Node.js 18+（用于前端依赖）
-- Unity 2021+（参见 `Unity/README_UnitySetup.md`）
-- 可选：Arduino/串口控制硬件
+- 可选：Unity 2021+（参见 `Unity/README_UnitySetup.md`）
 
 ## 快速开始
 
@@ -224,8 +223,8 @@ Web 页面上的"表情控制"按钮有以下三种状态：
 
 6. **打开控制界面**
 
-   - Web：`cd ..\..\web` 后直接在浏览器打开 `index.html`，或按 `web/README.md` 配置 `DRIP_EVENT_ENDPOINT`、`DRIP_SERIAL_ENDPOINT` 后部署。
-   - Unity：按照 `Unity/README_UnitySetup.md` 将 `CameraOrbit.cs`、`TopPartController.cs` 等脚本挂载到对应对象，运行场景并确认串口/UDP 设置与 Bridge 一致。
+   - Web（默认）：`cd ..\..\web` 后直接在浏览器打开 `index.html`，或按 `web/README.md` 配置 `DRIP_EVENT_ENDPOINT`、`DRIP_SERIAL_ENDPOINT` 后部署。
+   - Unity（可选）：按照 `Unity/README_UnitySetup.md` 将 `CameraOrbit.cs`、`TopPartController.cs` 等脚本挂载到对应对象，运行场景并确认串口/UDP 设置与 Bridge 一致。
 
 7. **可选自动化**：执行 `scripts/start_dripmotion.ps1` 按顺序拉起上述进程。
 
@@ -233,15 +232,16 @@ Web 页面上的"表情控制"按钮有以下三种状态：
 
 1. Bridge（统一事件总线）
 2. Hand（手势事件 → Bridge）
-3. Face（语音/表情/串口 → Bridge/硬件）
-4. Web 或 Unity 前端（接收 Bridge 事件、发送控制指令）
+3. Face（语音/表情 → Bridge）
+4. Web 前端（默认，接收 Bridge 事件、发送控制指令）
+5. 可选：Unity 前端联调（作为扩展可视化终端）
 
 ## 配置项
 
 - `web/README.md` 中描述的 `DRIP_EVENT_ENDPOINT`、`DRIP_SERIAL_ENDPOINT`
-- `Face/PythonProject/config.json` / `config.py`：相机索引、串口号、语音关键词
+- `Face/PythonProject/config.json` / `config.py`：相机索引、语音关键词
 - `Hand/web_bridge.py` 与 `Face/web_bridge.py`：统一的 WebSocket/HTTP 地址需与 Bridge 保持一致
-- `Unity/GestureCommandBridge.cs`、`SerialCommandBridge.cs`：串口名、波特率、UDP 端口需同步
+- 可选：`Unity/GestureCommandBridge.cs`、`SerialCommandBridge.cs`：串口名、波特率、UDP 端口需同步
 
 ## 3D 模型与控制现状
 
@@ -252,7 +252,7 @@ Web 页面上的"表情控制"按钮有以下三种状态：
 - 模型：优先加载 `web/models/dripmotion.glb`
 - 回退机制：当模型文件缺失或未找到目标节点时，自动回退到内置演示模型
 
-### Unity 端
+### Unity 端（可选）
 
 - 关键脚本：`Unity/TopPartController.cs`、`Unity/SerialCommandBridge.cs`、`Unity/GestureCommandBridge.cs`
 - 负责接收同一套控制语义并驱动场景对象
@@ -269,11 +269,11 @@ Web 页面上的"表情控制"按钮有以下三种状态：
 
 1. Face / Hand / Voice 识别输入
 2. Bridge 统一广播事件
-3. Web / Unity 前端接收事件并映射标准指令
+3. Web 前端接收事件并映射标准指令（可选扩展到 Unity）
 4. 模型节点执行运动
 
 ## 相关文档
 
 - `web/README.md`：Three.js 控制面板说明
-- `Unity/README_UnitySetup.md`：Unity 场景搭建与测试
+- `Unity/README_UnitySetup.md`：Unity 场景搭建与测试（可选）
 - `bridge/README.md`：事件服务器协议与参数

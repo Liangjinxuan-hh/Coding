@@ -1,13 +1,13 @@
 # 滴动仪 Web 基础交互面板说明
 
-该页面用于快速在浏览器端演示“模型展示 + 按钮控制 + 语音/手势指令”三大核心功能，逻辑与 Unity 版本一致，可直接在 PC 上打开 `index.html` 进行体验。
+该页面用于快速在浏览器端演示“模型展示 + 按钮控制 + 语音/手势指令”三大核心功能，可直接在 PC 上打开 `index.html` 进行体验。
 
 ## 功能概览
 
 1. **模型展示区**：Three.js 渲染的 chaifen.fbx 模型，支持鼠标拖拽旋转、滚轮缩放。
 2. **控制按钮区**：底部按钮对应圆环上移 / 下移 / 左转 / 右转 / 花朵打开 / 花朵闭合 / 停止。
 3. **状态反馈区**：右上角实时同步高度（cm）与角度（度），并输出中文状态文案。
-4. **手势/语音桥接**：`window.DripCommandHub` 对外暴露 `send(command)` 和 `getState()`，可被语音模块、手势识别或 Python/硬件桥接调用。
+4. **手势/语音桥接**：`window.DripCommandHub` 对外暴露 `send(command)` 和 `getState()`，可被语音模块、手势识别或 Python 事件桥接调用。
 
 ## 模型分层架构
 
@@ -99,7 +99,7 @@ python -m http.server 8080 --directory web
     ```
 
 2. 运行面部和手势脚本（同原来流程）。它们会自动把状态、命令推送到 `http://127.0.0.1:5050/api/events`。
-3. 打开 Web 页面或 Unity WebView。页面会通过 `ws://127.0.0.1:5050/ws` 接收事件，更新“面部交互 / 手势交互”卡片，并把命令映射到 `DripCommandHub`。
+3. 打开 Web 页面。页面会通过 `ws://127.0.0.1:5050/ws` 接收事件，更新“面部交互 / 手势交互”卡片，并把命令映射到 `DripCommandHub`。
 
 > 如果桥接端口或地址需要修改，可设置 `DRIP_EVENT_ENDPOINT` 环境变量再运行 Python 检测脚本。
 
@@ -118,20 +118,21 @@ window.DripCommandHub.send("停止");
 window.postMessage({ type: "dd-command", payload: "左转" });
 ```
 
-### 3. Python 串口/语音桥接（示例）
+### 3. Python 事件桥接（示例）
 
 ```python
-import serial
 import time
 import websocket
 
-ser = serial.Serial("COM5", 9600)
-ws = websocket.create_connection("ws://127.0.0.1:12345")
+ws = websocket.create_connection("ws://127.0.0.1:5050/ws")
 
-while True:
-    cmd = ser.readline().decode("utf-8").strip()
-    ws.send(cmd)  # 服务端收到后调用 window.DripCommandHub.send(cmd)
+commands = ["moveUp", "rotateLeft", "stop"]
+
+for cmd in commands:
+    ws.send(cmd)
     time.sleep(0.05)
+
+ws.close()
 ```
 
 ## 文件列表
