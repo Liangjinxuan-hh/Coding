@@ -45,7 +45,7 @@
 | 右转 | `rotateRight` | RingA~D 顺时针旋转 |
 | 花朵打开 | `flowerOpen` | Flower 放大 |
 | 花朵闭合 | `flowerClose` | Flower 缩小 |
-| 停止 | `stop` | 停止所有运动 |
+| 停止 | `stop` | 将所有圆环复位到初始位置（双手五指张开） |
 
 ## 手势指令映射
 
@@ -59,7 +59,7 @@
 | (rotateRight) | `rotateRight` | 圆环右转 |
 | (flowerOpen/openFlower) | `flowerOpen` | 花朵打开 |
 | (flowerClose/closeFlower) | `flowerClose` | 花朵闭合 |
-| (stop) | `stop` | 停止 |
+| (stop) | `stop` | 复位所有圆环（双手五指张开） |
 
 > 手势识别使用 MediaPipe Hand，具体手势定义见 `Hand/main2.py`
 

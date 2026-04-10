@@ -98,6 +98,8 @@ SPECIAL_GESTURE_CONFIRM_FRAMES = 2
 SPECIAL_GESTURE_SWITCH_MIN_INTERVAL = 0.18
 SPECIAL_GESTURE_REPEAT_COOLDOWN = 0.65
 SPECIAL_GESTURE_RELEASE_TIMEOUT = 0.45
+STOP_GESTURE_CONFIRM_FRAMES = 2
+STOP_GESTURE_REPEAT_COOLDOWN = 0.7
 
 THUMB_TIP = 4
 INDEX_FINGER_TIP = 8
@@ -586,32 +588,21 @@ def detect_index_direction_gesture(landmarks):
 
 
 def is_stop_pose_hand(landmarks):
-    """单只手是否满足停止手势的姿态要求。"""
+    """单只手是否满足复位手势的姿态要求：五指张开。"""
     try:
-        index_extended = is_finger_extended(landmarks, INDEX_FINGER_TIP, INDEX_FINGER_PIP)
-        middle_bent = not is_finger_extended(landmarks, MIDDLE_FINGER_TIP, MIDDLE_FINGER_PIP)
-        ring_bent = not is_finger_extended(landmarks, RING_FINGER_TIP, RING_FINGER_PIP)
-        pinky_bent = not is_finger_extended(landmarks, PINKY_FINGER_TIP, PINKY_FINGER_PIP)
-        thumb_bent = landmarks[THUMB_TIP].y > landmarks[THUMB_IP].y
-        return index_extended and middle_bent and ring_bent and pinky_bent and thumb_bent
+        return is_hand_open(landmarks)
     except (IndexError, TypeError):
         return False
 
 
 def detect_stop_gesture_pair(hand_states):
-    """检测双手停止手势：左右手食指同时竖起并彼此靠近。"""
+    """检测双手复位手势：左右手均为五指张开。"""
     left_hand = next((item for item in hand_states if item.get('hand_label') == 'Left' and item.get('stop_pose')), None)
     right_hand = next((item for item in hand_states if item.get('hand_label') == 'Right' and item.get('stop_pose')), None)
 
     if not left_hand or not right_hand:
         return []
-
-    left_tip = left_hand['landmarks'][INDEX_FINGER_TIP]
-    right_tip = right_hand['landmarks'][INDEX_FINGER_TIP]
-    if distance_2d(left_tip, right_tip) <= 0.08:
-        return [left_hand, right_hand]
-
-    return []
+    return [left_hand, right_hand]
 
 
 # --- 4. 主循环 ---
@@ -627,6 +618,8 @@ def main():
     led_column_left = LEDColumn(num_leds=8)
     led_column_right = LEDColumn(num_leds=8)
     camera_read_failures = 0
+    stop_gesture_candidate_count = 0
+    last_stop_gesture_emit = 0.0
 
     with HandLandmarker.create_from_options(options) as detector:
         last_frame_push = 0.0
@@ -716,6 +709,7 @@ def main():
                         bdbg = get_b_debug_metrics(hand_landmarks)
                         ring_letter = detect_ring_gesture(hand_landmarks)
                         special_gesture = detect_special_gesture(hand_landmarks)
+                        stop_pose = is_stop_pose_hand(hand_landmarks)
                         left_ring_detected = ring_letter
                         left_special_detected = special_gesture
                         if ring_letter:
@@ -791,6 +785,7 @@ def main():
                     if hand_label == 'Right':
                         right_seen = True
                         special_gesture = detect_special_gesture(hand_landmarks)
+                        stop_pose = is_stop_pose_hand(hand_landmarks)
                         right_special_detected = special_gesture
 
                         if special_gesture:
@@ -833,6 +828,14 @@ def main():
                         frame_hand_states.append({
                             "hand_label": hand_label,
                             "direction": direction,
+                            "stop_pose": stop_pose,
+                            "landmarks": hand_landmarks,
+                        })
+                    elif hand_label == 'Left':
+                        frame_hand_states.append({
+                            "hand_label": hand_label,
+                            "stop_pose": stop_pose,
+                            "landmarks": hand_landmarks,
                         })
 
                     # 更新历史数据
@@ -895,6 +898,27 @@ def main():
                         right_hand_history['last_special_emit'] = current_loop_time
                         right_hand_history['special_candidate_count'] = 0
                         publish_hand_command("specialGesture", {"hand": "Right", "gesture": "HEART"})
+
+            stop_gesture_pair = detect_stop_gesture_pair(frame_hand_states)
+            if stop_gesture_pair:
+                stop_gesture_candidate_count += 1
+                if (
+                    stop_gesture_candidate_count >= STOP_GESTURE_CONFIRM_FRAMES
+                    and current_loop_time - last_stop_gesture_emit >= STOP_GESTURE_REPEAT_COOLDOWN
+                ):
+                    publish_hand_command(
+                        "stop",
+                        {
+                            "gesture": "STOP_PAIR",
+                            "hands": ["Left", "Right"],
+                            "ring": active_ring,
+                            "source": "stop_pose",
+                        },
+                    )
+                    last_stop_gesture_emit = current_loop_time
+                    stop_gesture_candidate_count = 0
+            else:
+                stop_gesture_candidate_count = 0
 
             right_history = hand_data['Right']
             active_ring = hand_data['Left'].get('active_ring') or 'A'

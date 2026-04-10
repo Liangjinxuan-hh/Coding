@@ -1647,6 +1647,7 @@ let activeHandSpecialGesture = null;
 let activeLeftHandSpecialGesture = null;
 let activeRightHandSpecialGesture = null;
 let activeHandBehavior = "选环动作模式";
+let activeHandResetHint = "双手五指张开可复位所有圆环";
 let handRhythmClockSec = 0;
 
 renderLoop();
@@ -2368,6 +2369,25 @@ function handleBridgeEvent(message) {
         return;
       }
 
+      if (message.payload?.action === "stop") {
+        const stopSource = message.payload?.meta?.source || message.payload?.source || null;
+        if (stopSource === "stop_pose") {
+          if (handGestureRhythmModeEnabled) {
+            return;
+          }
+          updateStatus("复位手势：双手五指张开，正在复位所有圆环");
+          activeHandBehavior = "复位手势已识别，正在复位...";
+          activeHandResetHint = "双手五指张开已识别，正在复位所有圆环";
+          updateHandCard({});
+          resetAllRingsToHome("圆环组 - 已复位");
+          activeHandBehavior = "选环动作模式（已复位）";
+          activeHandResetHint = "双手五指张开可复位所有圆环";
+          updateStatus("复位完成：所有圆环已回到初始位置");
+          updateHandCard({});
+          return;
+        }
+      }
+
       if (message.payload?.action === "selectRing") {
         if (handGestureRhythmModeEnabled) {
           return;
@@ -2680,10 +2700,23 @@ function updateHandCard(payload) {
   const rightDirection = typeof right.index_direction === "string" ? right.index_direction : "not_detected";
 
   const behaviorText = activeHandBehavior || "等待检测";
+  if (handStateEl) {
+    if (handGestureRhythmModeEnabled) {
+      handStateEl.textContent = "手势：特殊手势模式";
+    } else if (behaviorText.includes("复位手势已识别") || behaviorText.includes("正在复位")) {
+      handStateEl.textContent = "手势：复位中";
+    } else if (behaviorText.includes("已复位")) {
+      handStateEl.textContent = "手势：已复位";
+    } else {
+      handStateEl.textContent = "手势：运行中";
+    }
+  }
+
   const ringLines = [
     `左手选环手势：${toCnStatus(leftGesture)}`,
     `左手当前环：${toCnStatus(leftActive)}`,
     `右手食指标向：${toCnStatus(rightDirection)}`,
+    `复位提示：${activeHandResetHint}`,
   ];
 
   const specialLines = [

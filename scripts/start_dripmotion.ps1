@@ -9,9 +9,13 @@ $webDir = Join-Path $root "web"
 $faceDir = Join-Path $root "Face\PythonProject"
 $handDir = Join-Path $root "Hand"
 $bridgePort = 5051
+$webPort = 8081
 $pythonExe = "python"
 $py312 = Join-Path $root ".venv312\Scripts\python.exe"
 $pyDefault = Join-Path $root ".venv\Scripts\python.exe"
+$runtimeDir = Join-Path $root ".runtime"
+$bridgePidFile = Join-Path $runtimeDir "bridge.pid"
+$webPidFile = Join-Path $runtimeDir "web.pid"
 if (Test-Path $py312) {
     $pythonExe = (Resolve-Path $py312).Path
 } elseif (Test-Path $pyDefault) {
@@ -39,21 +43,76 @@ $env:DRIP_BRIDGE_PORT = "$bridgePort"
 $env:DRIP_EVENT_ENDPOINT = "http://127.0.0.1:$bridgePort/api/events"
 $env:DRIP_LOCAL_PREVIEW = "0"
 
-function Stop-CameraModules {
-    foreach ($moduleName in @("face", "hand")) {
-        $jobs = Get-Job -Name $moduleName -ErrorAction SilentlyContinue
-        if ($jobs) {
-            foreach ($j in $jobs) {
-                try {
-                    Stop-Job -Id $j.Id -ErrorAction SilentlyContinue
-                    Remove-Job -Id $j.Id -ErrorAction SilentlyContinue
-                } catch {
-                    Write-Warning ("Failed to cleanup existing job {0} (Id: {1})" -f $moduleName, $j.Id)
-                }
+function Ensure-RuntimeDir {
+    if (-not (Test-Path $runtimeDir)) {
+        New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
+    }
+}
+
+function Stop-ProcessByPidFile {
+    param (
+        [string]$Name,
+        [string]$PidFile
+    )
+
+    if (-not (Test-Path $PidFile)) {
+        return
+    }
+
+    $rawPid = Get-Content $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($rawPid -match '^\d+$') {
+        $pidNum = [int]$rawPid
+        $proc = Get-Process -Id $pidNum -ErrorAction SilentlyContinue
+        if ($proc) {
+            try {
+                Stop-Process -Id $pidNum -Force -ErrorAction Stop
+                Write-Host ("[{0}] stopped (PID: {1})" -f $Name, $pidNum) -ForegroundColor DarkYellow
+            } catch {
+                Write-Warning ("Failed to stop {0} PID {1}: {2}" -f $Name, $pidNum, $_.Exception.Message)
             }
         }
     }
 
+    Remove-Item $PidFile -ErrorAction SilentlyContinue
+}
+
+function Stop-ProcessByPort {
+    param (
+        [int]$Port,
+        [string]$Name
+    )
+
+    $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    if (-not $listeners) {
+        return
+    }
+
+    foreach ($listener in $listeners) {
+        $pidNum = $listener.OwningProcess
+        if ($pidNum -and $pidNum -gt 0) {
+            try {
+                Stop-Process -Id $pidNum -Force -ErrorAction Stop
+                Write-Host ("[{0}] stopped by port {1} (PID: {2})" -f $Name, $Port, $pidNum) -ForegroundColor DarkYellow
+            } catch {
+                Write-Warning ("Failed to stop PID {0} on port {1}: {2}" -f $pidNum, $Port, $_.Exception.Message)
+            }
+        }
+    }
+}
+
+function Start-ModuleProcess {
+    param (
+        [string]$Name,
+        [string]$ArgumentList,
+        [string]$PidFile
+    )
+
+    $proc = Start-Process -FilePath $pythonExe -ArgumentList $ArgumentList -WorkingDirectory $root -WindowStyle Hidden -PassThru
+    Set-Content -Path $PidFile -Value "$($proc.Id)" -Encoding ascii
+    Write-Host "[$Name] started (PID: $($proc.Id))" -ForegroundColor DarkCyan
+}
+
+function Stop-CameraModules {
     $cameraProcesses = Get-CimInstance Win32_Process | Where-Object {
         $_.Name -eq 'python.exe' -and (
             $_.CommandLine -match 'main\.py' -or
@@ -71,50 +130,20 @@ function Stop-CameraModules {
     }
 }
 
-function Start-ModuleJob {
-    param (
-        [string]$Name,
-        [string]$WorkingDir,
-        [string]$Command
-    )
-
-    if (-not (Test-Path $WorkingDir)) {
-        Write-Warning ("Skip {0}: path not found {1}" -f $Name, $WorkingDir)
-        return
-    }
-
-    # 避免重复同名作业导致端口冲突或状态混乱
-    $existingJobs = Get-Job -Name $Name -ErrorAction SilentlyContinue
-    if ($existingJobs) {
-        foreach ($j in $existingJobs) {
-            try {
-                Stop-Job -Id $j.Id -ErrorAction SilentlyContinue
-                Remove-Job -Id $j.Id -ErrorAction SilentlyContinue
-            } catch {
-                Write-Warning ("Failed to cleanup existing job {0} (Id: {1})" -f $Name, $j.Id)
-            }
-        }
-    }
-
-    $job = Start-Job -Name $Name -ScriptBlock {
-        param($Dir, $Cmd)
-        Set-Location $Dir
-        Invoke-Expression $Cmd
-    } -ArgumentList $WorkingDir, $Command
-
-    Write-Host "[$Name] started (Job Id: $($job.Id))" -ForegroundColor DarkCyan
-}
-
 Write-Host "Using Python interpreter: $pythonExe" -ForegroundColor DarkGray
+Ensure-RuntimeDir
+Stop-ProcessByPidFile -Name "bridge" -PidFile $bridgePidFile
+Stop-ProcessByPidFile -Name "web" -PidFile $webPidFile
+Stop-ProcessByPort -Name "bridge" -Port $bridgePort
+Stop-ProcessByPort -Name "web" -Port $webPort
 Stop-CameraModules
-$bridgeCmd = "& `"$pythonExe`" -m uvicorn bridge.server:app --host 127.0.0.1 --port $bridgePort"
-$webCmd = "& `"$pythonExe`" -m http.server 8081 --bind 127.0.0.1 --directory web"
-Start-ModuleJob -Name "bridge" -WorkingDir $root -Command $bridgeCmd
-Start-ModuleJob -Name "web" -WorkingDir $root -Command $webCmd
+$bridgeArgs = "-m uvicorn bridge.server:app --host 127.0.0.1 --port $bridgePort"
+$webArgs = "-m http.server $webPort --bind 127.0.0.1 --directory web"
+Start-ModuleProcess -Name "bridge" -ArgumentList $bridgeArgs -PidFile $bridgePidFile
+Start-ModuleProcess -Name "web" -ArgumentList $webArgs -PidFile $webPidFile
 
 Write-Host "DripMotion stack launched. Open http://127.0.0.1:8081 (bridge: $bridgePort)" -ForegroundColor Green
 Write-Host "Use page controls to start or stop face and hand modules." -ForegroundColor Green
 Write-Host "Camera modules are not started at launch; click the web buttons to enable them." -ForegroundColor Green
-Write-Host "Run Get-Job to inspect jobs, and Stop-Job -Name bridge/web to stop." -ForegroundColor Yellow
-Start-Sleep -Seconds 1
+Write-Host "Run Stop_DripMotion.bat to stop bridge and web." -ForegroundColor Yellow
 Start-Process "http://127.0.0.1:8081"
