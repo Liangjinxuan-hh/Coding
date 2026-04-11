@@ -1,0 +1,4 @@
+experiment,model,setting,calls,qps,mean_ms,p50_ms,p95_ms,p99_ms,notes
+v2_default,v2_lora,max_new_tokens default,130,0.40,2485.58,2395.47,2945.33,3543.68,cpu_int8=0
+v2_tuned,v2_lora,max_new_tokens=8,130,0.61,1627.23,1613.77,1863.59,2283.10,cpu_int8=0
+v3_tuned,v3_lora,max_new_tokens=8,130,0.59,1701.88,1650.19,2296.01,3042.09,cpu_int8=0

@@ -1,0 +1,6 @@
+experiment,model,dataset,total,correct,accuracy_percent,notes
+baseline_v2,rule_fallback,test_augmented_v2,120,71,59.17,keyword fallback only
+v2_default,v2_lora,test_augmented_v2,120,100,83.33,max_new_tokens default
+v2_tuned,v2_lora,test_augmented_v2,120,108,90.00,max_new_tokens=8 min_conf=0.30
+baseline_v3,rule_fallback,test_augmented_v3,159,93,58.49,keyword fallback only
+v3_tuned,v3_lora,test_augmented_v3,159,147,92.45,max_new_tokens=8 min_conf=0.30

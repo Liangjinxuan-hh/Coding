@@ -1,7 +1,14 @@
 import serial
 import time
+import sys
+from pathlib import Path
 from tkinter import messagebox
 import config
+
+_current = Path(__file__).resolve()
+PROJECT_ROOT = _current.parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
 try:
     from web_bridge import publish_face_command
@@ -10,7 +17,7 @@ except Exception:  # pragma: no cover - bridge optional
         return
 
 try:
-    from voice_web_bridge import publish_voice_command
+    from Voice.PythonProject.voice_web_bridge import publish_voice_command
 except Exception:  # pragma: no cover - bridge optional
     def publish_voice_command(*_, **__):
         return
