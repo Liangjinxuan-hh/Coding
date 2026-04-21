@@ -285,7 +285,7 @@ def plot_endpoint_latency(summary: list[dict[str, Any]]) -> Path:
 
     plt.figure(figsize=(8, 4.8))
     colors = _bw_bar_style(len(vals))
-    bars = plt.bar(labels, vals, color=colors, edgecolor="black", linewidth=1.0)
+    bars = plt.bar(labels, vals, width=0.35, color=colors, edgecolor="black", linewidth=1.0)
     plt.title("Endpoint P95 Latency (ms)")
     plt.ylabel("Latency (ms)")
     plt.ylim(0, max(vals) * 1.25 if vals else 1)

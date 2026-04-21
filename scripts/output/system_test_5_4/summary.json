@@ -1,46 +1,46 @@
 {
   "base_url": "http://127.0.0.1:5051",
-  "generated_at": "2026-04-10 01:13:08",
+  "generated_at": "2026-04-12 14:57:32",
   "endpoint_summary": [
     {
       "name": "control_status",
       "total": 50,
       "ok": 50,
       "success_rate": 100.0,
-      "avg_latency_ms": 11.798,
-      "median_latency_ms": 4.586,
-      "p95_latency_ms": 29.483,
-      "max_latency_ms": 36.021
+      "avg_latency_ms": 13.624,
+      "median_latency_ms": 14.968,
+      "p95_latency_ms": 28.075,
+      "max_latency_ms": 30.557
     },
     {
       "name": "health",
       "total": 50,
       "ok": 50,
       "success_rate": 100.0,
-      "avg_latency_ms": 14.81,
-      "median_latency_ms": 15.346,
-      "p95_latency_ms": 26.405,
-      "max_latency_ms": 75.576
+      "avg_latency_ms": 16.697,
+      "median_latency_ms": 15.75,
+      "p95_latency_ms": 29.496,
+      "max_latency_ms": 68.376
     },
     {
       "name": "ingest_event",
       "total": 100,
       "ok": 100,
       "success_rate": 100.0,
-      "avg_latency_ms": 10.505,
-      "median_latency_ms": 4.221,
-      "p95_latency_ms": 27.36,
-      "max_latency_ms": 39.313
+      "avg_latency_ms": 14.865,
+      "median_latency_ms": 15.394,
+      "p95_latency_ms": 29.869,
+      "max_latency_ms": 32.343
     },
     {
       "name": "voice_plan",
       "total": 30,
       "ok": 30,
       "success_rate": 100.0,
-      "avg_latency_ms": 12.733,
-      "median_latency_ms": 14.883,
-      "p95_latency_ms": 27.97,
-      "max_latency_ms": 30.831
+      "avg_latency_ms": 11.938,
+      "median_latency_ms": 10.826,
+      "p95_latency_ms": 27.821,
+      "max_latency_ms": 29.03
     }
   ],
   "ws_summary": [
@@ -49,10 +49,10 @@
       "total": 30,
       "ok": 30,
       "success_rate": 100.0,
-      "avg_latency_ms": 0.256,
-      "median_latency_ms": 0.256,
-      "p95_latency_ms": 0.294,
-      "max_latency_ms": 0.327
+      "avg_latency_ms": 0.258,
+      "median_latency_ms": 0.259,
+      "p95_latency_ms": 0.37,
+      "max_latency_ms": 0.426
     }
   ],
   "robustness_summary": [
@@ -61,70 +61,70 @@
       "total": 1,
       "ok": 1,
       "success_rate": 100.0,
-      "avg_latency_ms": 4.201,
-      "median_latency_ms": 4.201,
-      "p95_latency_ms": 4.201,
-      "max_latency_ms": 4.201
+      "avg_latency_ms": 15.585,
+      "median_latency_ms": 15.585,
+      "p95_latency_ms": 15.585,
+      "max_latency_ms": 15.585
     },
     {
       "name": "invalid_control_action",
       "total": 1,
       "ok": 1,
       "success_rate": 100.0,
-      "avg_latency_ms": 4.537,
-      "median_latency_ms": 4.537,
-      "p95_latency_ms": 4.537,
-      "max_latency_ms": 4.537
+      "avg_latency_ms": 3.957,
+      "median_latency_ms": 3.957,
+      "p95_latency_ms": 3.957,
+      "max_latency_ms": 3.957
     },
     {
       "name": "invalid_control_target",
       "total": 1,
       "ok": 1,
       "success_rate": 100.0,
-      "avg_latency_ms": 8.528,
-      "median_latency_ms": 8.528,
-      "p95_latency_ms": 8.528,
-      "max_latency_ms": 8.528
+      "avg_latency_ms": 8.856,
+      "median_latency_ms": 8.856,
+      "p95_latency_ms": 8.856,
+      "max_latency_ms": 8.856
     },
     {
       "name": "invalid_event_schema",
       "total": 1,
       "ok": 1,
       "success_rate": 100.0,
-      "avg_latency_ms": 4.418,
-      "median_latency_ms": 4.418,
-      "p95_latency_ms": 4.418,
-      "max_latency_ms": 4.418
+      "avg_latency_ms": 4.118,
+      "median_latency_ms": 4.118,
+      "p95_latency_ms": 4.118,
+      "max_latency_ms": 4.118
     },
     {
       "name": "voice_running_probe",
       "total": 10,
       "ok": 10,
       "success_rate": 100.0,
-      "avg_latency_ms": 18.551,
-      "median_latency_ms": 21.602,
-      "p95_latency_ms": 25.953,
-      "max_latency_ms": 26.102
+      "avg_latency_ms": 11.922,
+      "median_latency_ms": 5.636,
+      "p95_latency_ms": 26.018,
+      "max_latency_ms": 27.07
     },
     {
       "name": "voice_start",
       "total": 10,
       "ok": 10,
       "success_rate": 100.0,
-      "avg_latency_ms": 18.733,
-      "median_latency_ms": 20.907,
-      "p95_latency_ms": 31.319,
-      "max_latency_ms": 34.495
+      "avg_latency_ms": 29.068,
+      "median_latency_ms": 30.889,
+      "p95_latency_ms": 56.3,
+      "max_latency_ms": 71.403
     },
     {
       "name": "voice_stop",
       "total": 10,
       "ok": 10,
       "success_rate": 100.0,
-      "avg_latency_ms": 14.503,
-      "median_latency_ms": 15.053,
-      "p95_latency_ms": 24.535,
-      "max_latency_ms": 29.027
+      "avg_latency_ms": 13.9,
+      "median_latency_ms": 10.128,
+      "p95_latency_ms": 31.339,
+      "max_latency_ms": 32.068
     }
   ]
 }

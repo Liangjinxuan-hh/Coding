@@ -35,20 +35,26 @@ def main() -> None:
     voice_thread.start()
 
     last_command = LAST_COMMAND_SENT[0]
+    last_snapshot = None
+    last_snapshot_at = 0.0
+    heartbeat_sec = 1.5
     while True:
         status = V_CURRENT_VOICE_STATUS[0]
         transcript = V_LAST_SPEECH[0]
         current_command = LAST_COMMAND_SENT[0]
 
-        publish_voice_snapshot(
-            {
-                "status_text": status,
-                "transcript": transcript,
-                "available": bool(V_VOICE_AVAIL[0]),
-                "awake": bool(V_WAKE_DETECTED[0]),
-                "last_command": current_command,
-            }
-        )
+        snapshot = {
+            "status_text": status,
+            "transcript": transcript,
+            "available": bool(V_VOICE_AVAIL[0]),
+            "awake": bool(V_WAKE_DETECTED[0]),
+            "last_command": current_command,
+        }
+        now_ts = time.time()
+        if snapshot != last_snapshot or (now_ts - last_snapshot_at) >= heartbeat_sec:
+            publish_voice_snapshot(snapshot)
+            last_snapshot = dict(snapshot)
+            last_snapshot_at = now_ts
 
         if current_command != last_command:
             if current_command and not str(current_command).startswith("失败"):

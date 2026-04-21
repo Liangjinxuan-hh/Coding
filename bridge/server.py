@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
+import difflib
 import subprocess
 import sys
 import time
@@ -37,7 +39,7 @@ MODULE_CONFIG = {
         "cmd": [sys.executable, "main2.py"],
     },
     "voice": {
-        "cwd": ROOT_DIR / "Face" / "PythonProject",
+        "cwd": ROOT_DIR / "Voice" / "PythonProject",
         "cmd": [sys.executable, "voice_module.py"],
     },
 }
@@ -188,7 +190,117 @@ def _normalize_duration(duration_ms: int | None) -> int:
     return max(250, min(int(duration_ms), 5000))
 
 
+def _extract_ring(seg: str, last_ring: str | None) -> str | None:
+    ring_alias = {
+        "A": ["a", "A", "Ａ", "ａ", "甲", "诶", "哎", "啊", "一"],
+        "B": ["b", "B", "Ｂ", "ｂ", "乙", "比", "必", "笔", "二"],
+        "C": ["c", "C", "Ｃ", "ｃ", "丙", "西", "希", "兮", "三"],
+        "D": ["d", "D", "Ｄ", "ｄ", "丁", "低", "地", "弟", "四"],
+    }
+    for ring, keys in ring_alias.items():
+        for key in keys:
+            if f"{key}环" in seg or seg.startswith(key):
+                return ring
+
+    # 对可能缺少“环”字的短片段做轻量模糊匹配。
+    compact = re.sub(r"\s+", "", seg or "")
+    for ring, keys in ring_alias.items():
+        for key in keys:
+            if len(key) >= 1 and difflib.SequenceMatcher(a=compact[:2], b=key).ratio() >= 0.75:
+                return ring
+
+    if "全部" in seg or "所有" in seg or "全环" in seg:
+        return None
+    return last_ring
+
+
+def _extract_action(seg: str) -> str | None:
+    compact = re.sub(r"\s+", "", seg or "")
+    if not compact:
+        return None
+
+    # 先剔除环标记，减少对动作词匹配的干扰。
+    compact = re.sub(r"[AaＡａ甲诶哎啊一BbＢｂ乙比必笔二CcＣｃ丙西希兮三DdＤｄ丁低地弟四]环", "", compact)
+
+    if any(k in compact for k in ["停", "停止", "止", "别动", "不动", "静止"]):
+        return "stop"
+    if any(k in compact for k in ["左", "逆时针", "左转", "向左", "往左"]):
+        return "rotateLeft"
+    if any(k in compact for k in ["右", "顺时针", "右转", "向右", "往右"]):
+        return "rotateRight"
+    if any(k in compact for k in ["上", "升", "抬"]):
+        return "moveUp"
+    if any(k in compact for k in ["下", "降", "落"]):
+        return "moveDown"
+
+    # 轻量模糊兜底，处理少量错字。
+    action_map = {
+        "moveUp": ["上移", "上升", "向上", "往上"],
+        "moveDown": ["下移", "下降", "向下", "往下"],
+        "rotateLeft": ["左转", "逆时针", "向左"],
+        "rotateRight": ["右转", "顺时针", "向右"],
+        "stop": ["停止", "停下", "别动"],
+    }
+    for action, kws in action_map.items():
+        for kw in kws:
+            if difflib.SequenceMatcher(a=compact, b=kw).ratio() >= 0.67:
+                return action
+    return None
+
+
+def _build_direct_ring_plan(text: str) -> Dict[str, Any] | None:
+    compact = re.sub(r"\s+", "", text or "")
+    if not compact:
+        return None
+
+    parts = [p for p in re.split(r"[，,。；;、\|]+|然后|再|并且|并|和", compact) if p]
+    steps: List[Dict[str, Any]] = []
+    last_ring: str | None = None
+
+    for part in parts:
+        ring = _extract_ring(part, last_ring)
+        action = _extract_action(part)
+        if ring is not None:
+            last_ring = ring
+        if not action:
+            continue
+        steps.append(
+            {
+                "ring": ring,
+                "action": action,
+                "durationMs": 900 if action != "stop" else 350,
+            }
+        )
+
+    if not steps:
+        ring = _extract_ring(compact, None)
+        action = _extract_action(compact)
+        if action:
+            steps.append(
+                {
+                    "ring": ring,
+                    "action": action,
+                    "durationMs": 900 if action != "stop" else 350,
+                }
+            )
+
+    if not steps:
+        return None
+
+    if steps[-1]["action"] != "stop":
+        steps.append({"ring": steps[-1]["ring"], "action": "stop", "durationMs": 350})
+
+    return {
+        "summary": "已按语音执行圆环控制",
+        "steps": steps,
+    }
+
+
 def _build_fallback_plan(text: str) -> Dict[str, Any]:
+    direct_plan = _build_direct_ring_plan(text)
+    if direct_plan:
+        return direct_plan
+
     rings = ["A", "B", "C", "D"]
     keywords = [
         ("山", "moveUp"),

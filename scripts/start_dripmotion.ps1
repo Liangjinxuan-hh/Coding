@@ -112,20 +112,21 @@ function Start-ModuleProcess {
     Write-Host "[$Name] started (PID: $($proc.Id))" -ForegroundColor DarkCyan
 }
 
-function Stop-CameraModules {
-    $cameraProcesses = Get-CimInstance Win32_Process | Where-Object {
+function Stop-InteractiveModules {
+    $moduleProcesses = Get-CimInstance Win32_Process | Where-Object {
         $_.Name -eq 'python.exe' -and (
             $_.CommandLine -match 'main\.py' -or
-            $_.CommandLine -match 'main2\.py'
+            $_.CommandLine -match 'main2\.py' -or
+            $_.CommandLine -match 'voice_module\.py'
         )
     }
 
-    foreach ($proc in $cameraProcesses) {
+    foreach ($proc in $moduleProcesses) {
         try {
             Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop
-            Write-Host ("Stopped stale camera process {0}: {1}" -f $proc.ProcessId, $proc.CommandLine) -ForegroundColor DarkYellow
+            Write-Host ("Stopped stale interactive module {0}: {1}" -f $proc.ProcessId, $proc.CommandLine) -ForegroundColor DarkYellow
         } catch {
-            Write-Warning ("Failed to stop camera process {0}: {1}" -f $proc.ProcessId, $_.Exception.Message)
+            Write-Warning ("Failed to stop interactive module {0}: {1}" -f $proc.ProcessId, $_.Exception.Message)
         }
     }
 }
@@ -136,7 +137,7 @@ Stop-ProcessByPidFile -Name "bridge" -PidFile $bridgePidFile
 Stop-ProcessByPidFile -Name "web" -PidFile $webPidFile
 Stop-ProcessByPort -Name "bridge" -Port $bridgePort
 Stop-ProcessByPort -Name "web" -Port $webPort
-Stop-CameraModules
+Stop-InteractiveModules
 $bridgeArgs = "-m uvicorn bridge.server:app --host 127.0.0.1 --port $bridgePort"
 $webArgs = "-m http.server $webPort --bind 127.0.0.1 --directory web"
 Start-ModuleProcess -Name "bridge" -ArgumentList $bridgeArgs -PidFile $bridgePidFile
